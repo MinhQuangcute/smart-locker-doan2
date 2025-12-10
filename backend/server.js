@@ -67,7 +67,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const PORT = 3000;
+const PORT = process.env.PORT ||3000;
 const JWT_SECRET = "supersecretkey"; // nhớ đổi khi lên production
 
 // =======================
