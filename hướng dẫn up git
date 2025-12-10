@@ -1,0 +1,13 @@
+git remote add origin https://github.com/yourusername/doanmoi.git
+git branch -M main
+git push -u origin main
+🧾 3️⃣ Sau đó những lần sau chỉ cần:
+Khi bạn có thay đổi mới:
+
+bash
+Copy code
+
+
+git add .
+git commit -m "update something"
+git push
