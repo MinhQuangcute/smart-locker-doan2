@@ -100,8 +100,8 @@ firebase-debug.log
 firebase-debug.*.log
 
 # Service account keys (security)
-serviceAccountKey.json
-adruino-backend/serviceAccountKey.json
+backend/serviceAccountKey.json
+
 
 # Temporary files
 -n/

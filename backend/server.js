@@ -45,14 +45,17 @@ function getRoleForPhone(phoneNumber) {
   const norm = normalizePhone(phoneNumber);
   return ADMIN_PHONES.includes(norm) ? "admin" : "resident";
 }
+// ket noi firebase
 
+let serviceAccount;
 
-// =======================
-// 1. Kết nối Firebase
-// =======================
-const serviceAccount = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "serviceAccountKey.json"), "utf8")
-);
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} else {
+  serviceAccount = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "serviceAccountKey.json"), "utf8")
+  );
+}
 
 
 admin.initializeApp({
