@@ -8,6 +8,19 @@ const jwt = require("jsonwebtoken");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 
+// Danh sách tủ logic theo kích thước (demo)
+// Thực tế: mỗi lockerId có thể là 1 ngăn tủ thật.
+const LOCKERS_BY_SIZE = {
+  small: ["S1", "S2"],      // tủ nhỏ
+  medium: ["M1", "M2"],     // tủ vừa
+  large: ["L1"]             // tủ lớn
+};
+
+
+
+
+
+
 // =======================
 // 0. Cấu hình ROLE (admin theo số điện thoại)
 // =======================
@@ -389,45 +402,91 @@ app.get("/api/locker/:id/status", authenticateToken, async (req, res) => {
   }
 });
 
-/// Cư dân đặt tủ trước
+// Cư dân đặt tủ trước (có chọn kích thước tủ)
 app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
-  const { lockerId } = req.body;
+  const { lockerSize } = req.body;
   const receiverPhone = req.user.phoneNumber;  // cư dân đang login
 
-  if (!lockerId) {
-    return res.status(400).json({ error: "Locker ID required" });
+  // Chấp nhận 3 size: small / medium / large
+  const allowedSizes = ["small", "medium", "large"];
+  const size = (lockerSize || "").toLowerCase();
+
+  if (!allowedSizes.includes(size)) {
+    return res.status(400).json({
+      success: false,
+      error: "Locker size không hợp lệ (chỉ chấp nhận: small, medium, large)"
+    });
   }
 
-  try {
-    // TODO: kiểm tra locker có đang rảnh không (chưa có đơn pending)
-    // tạm bỏ qua để đơn giản
+   // 1. Lấy danh sách lockerId của size đó
+   const candidateLockers = LOCKERS_BY_SIZE[size] || [];
+   if (!candidateLockers.length) {
+     return res.status(400).json({
+       success: false,
+       error: "Hiện chưa cấu hình tủ nào cho kích thước này"
+     });
+   }
+ 
+   try {
+     // 2. Đọc toàn bộ Reservations để xem locker nào đang bận
+     const now = Date.now();
+     const snap = await db.ref("/Reservations").once("value");
+     const all = snap.val() || {};
+ 
+     const busyLockers = new Set();
+ 
+     Object.values(all).forEach(r => {
+       const isActive =
+         (r.status === "booked" || r.status === "loaded") &&
+         r.expiresAt && now < r.expiresAt;
+ 
+       if (isActive && r.lockerId) {
+         busyLockers.add(r.lockerId);
+       }
+     });
+ 
+     // 3. Tìm lockerId trống trong danh sách candidate
+     const freeLockerId = candidateLockers.find(id => !busyLockers.has(id));
+ 
+     if (!freeLockerId) {
+       return res.status(400).json({
+         success: false,
+         error: "Hiện không còn tủ trống cho kích thước này"
+       });
+     }
+ 
+     const lockerId = freeLockerId;
+ 
+     // 4. Tạo reservation
+     const reservationId = uuidv4();
+     const bookingCode = Math.floor(100000 + Math.random() * 900000).toString(); // mã 6 số
+     const expiresAt = now + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000); // 3 ngày
+ 
+     await db.ref(`/Reservations/${reservationId}`).set({
+       receiverPhone,
+       lockerId,
+       lockerSize: size,    // 🔹 lưu kích thước
+       bookingCode,
+       pickupOtp: null,
+       status: "booked",
+       createdAt: now,
+       expiresAt
+     });
+ 
+     res.json({
+       success: true,
+       reservationId,
+       lockerId,
+       lockerSize: size,
+       bookingCode,         // cư dân gửi cho shipper
+       expiresAt
+     });
+   } catch (err) {
+     console.error("Error reserving locker:", err);
+     res.status(500).json({ success: false, error: "Failed to reserve locker" });
+   }
+ });
 
-    const reservationId = uuidv4();
-    const bookingCode = Math.floor(100000 + Math.random() * 900000).toString(); // mã 6 số
-    const expiresAt = Date.now() + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000); // 3 ngày
-
-    await db.ref(`/Reservations/${reservationId}`).set({
-      receiverPhone,
-      lockerId,
-      bookingCode,
-      pickupOtp: null,      // chưa có OTP mở tủ
-      status: "booked",     // đã đặt, chưa bỏ hàng
-      createdAt: Date.now(),
-      expiresAt
-    });
-
-    res.json({
-      success: true,
-      reservationId,
-      lockerId,
-      bookingCode,   // cái này cư dân gửi cho shipper
-      expiresAt
-    });
-  } catch (err) {
-    console.error("Error reserving locker:", err);
-    res.status(500).json({ error: "Failed to reserve locker" });
-  }
-});
 
 // Lấy lịch sử đặt tủ của cư dân (theo số đang đăng nhập)
 app.get("/api/user/reservations", authenticateToken, async (req, res) => {
@@ -448,6 +507,7 @@ app.get("/api/user/reservations", authenticateToken, async (req, res) => {
       .map(([id, r]) => ({
         id,
         lockerId: r.lockerId || "Locker1",
+        lockerSize: r.lockerSize || null,   // 🔹 thêm dòng này
         // Nếu bạn dùng bookingCode (đặt tủ trước) thì lấy bookingCode,
         // nếu chưa có thì fallback sang otpCode cho đỡ bị null.
         bookingCode: r.bookingCode || r.otpCode || null,

@@ -136,17 +136,17 @@ class AuthManager {
         localStorage.removeItem('token');
         localStorage.removeItem('phoneNumber');
         localStorage.removeItem('role');
-        // Trang login của bạn là index.html
-        window.location.href = '/index.html';
-    }
-
-    // Bắt buộc phải đăng nhập, không thì đá về index
-    requireAuth() {
-        if (!this.isAuthenticated()) {
+            // Trang login của bạn là index.html
             window.location.href = '/index.html';
-            return false;
         }
-        return true;
+
+        // Bắt buộc phải đăng nhập, không thì đá về index
+        requireAuth() {
+            if (!this.isAuthenticated()) {
+                window.location.href = '/index.html';
+                return false;
+            }
+            return true;
     }
 
     // Format SĐT cho đẹp
