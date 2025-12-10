@@ -1,29 +1,21 @@
 {
-  "name": "adruino",
+  "name": "smart-locker-doan2",
   "version": "1.0.0",
-  "description": "Hệ thống điều khiển tủ khóa từ xa qua web với ESP32, Firebase và LED hiển thị trạng thái.",
-  "main": "chatbot.js",
+  "main": "backend/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node backend/server.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/MinhQuangcute/-n.git"
-  },
-  "keywords": [],
+  "keywords": [], 
   "author": "",
   "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/MinhQuangcute/-n/issues"
-  },
-  "homepage": "https://github.com/MinhQuangcute/-n#readme",
+  "description": "",
   "dependencies": {
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "firebase-admin": "^13.5.0",
     "jsonwebtoken": "^9.0.2",
-    "uuid": "^13.0.0"
-  }
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {}
 }
