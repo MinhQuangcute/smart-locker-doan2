@@ -164,7 +164,7 @@
             transform: translateY(-1px);
         }
 
-        /* Status strip (optional small info) */
+        /* Status strip */
 
         .status-strip {
             display: flex;
@@ -270,7 +270,8 @@
         }
 
         select,
-        input[type="number"] {
+        input[type="number"],
+        input[type="text"] {
             width: 100%;
             padding: 7px 9px;
             border-radius: 10px;
@@ -283,7 +284,8 @@
         }
 
         select:focus,
-        input[type="number"]:focus {
+        input[type="number"]:focus,
+        input[type="text"]:focus {
             border-color: var(--wood-accent);
             box-shadow: 0 0 0 1px rgba(244, 162, 38, 0.25),
                         0 0 0 4px rgba(244, 162, 38, 0.1);
@@ -370,6 +372,28 @@
             text-align: right;
             opacity: 0.75;
         }
+
+        .pickup-box {
+            margin-top: 4px;
+            padding: 8px 10px;
+            border-radius: 12px;
+            background: rgba(255, 247, 237, 0.95);
+            border: 1px solid rgba(212, 163, 72, 0.6);
+            font-size: 12px;
+        }
+
+        .pickup-box h4 {
+            margin: 0 0 4px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pickup-info-row {
+            margin-top: 4px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -384,7 +408,7 @@
                         </div>
                         <div class="brand-text">
                             <h1>Smart Locker Chung Cư</h1>
-                            <p>Đặt tủ gửi đồ & xem lịch sử bằng số điện thoại</p>
+                            <p>Đặt tủ gửi đồ, nhận hàng & xem lịch sử</p>
                         </div>
                     </div>
 
@@ -410,7 +434,7 @@
                     </div>
                     <div style="font-size: 11px; opacity: 0.85;">
                         <i class="fas fa-circle-info"></i>
-                        Bạn có thể đặt tủ và gửi mã cho shipper, sau đó theo dõi ở lịch sử.
+                        Đặt tủ để shipper gửi đồ, sau đó nhận hàng bằng OTP và theo dõi lịch sử.
                     </div>
                 </div>
 
@@ -422,7 +446,7 @@
                     </button>
                     <button id="tabHistory" class="dash-tab">
                         <i class="fas fa-clock-rotate-left"></i>
-                        Lịch sử đặt tủ
+                        Lịch sử & Nhận hàng
                     </button>
                 </div>
 
@@ -450,11 +474,50 @@
                         <div id="reserveResult" style="display:none;"></div>
                     </section>
 
-                    <!-- PANEL LỊCH SỬ -->
+                    <!-- PANEL LỊCH SỬ + NHẬN HÀNG -->
                     <section id="sectionHistory" class="dash-section hidden">
-                        <h3><i class="fas fa-clock-rotate-left"></i> Lịch sử đặt tủ</h3>
+                        <h3><i class="fas fa-clock-rotate-left"></i> Nhận hàng & lịch sử đặt tủ</h3>
                         <p>
-                            Các lượt đặt tủ gần đây của số điện thoại này.
+                            Kiểm tra xem bạn có đơn hàng đang chờ trong tủ không, sau đó nhập OTP để mở tủ lấy hàng.
+                        </p>
+
+                        <!-- KHỐI NHẬN HÀNG -->
+                        <div class="pickup-box">
+                            <h4><i class="fas fa-box"></i> Nhận hàng bằng OTP</h4>
+                            <p style="margin: 0 0 6px;">
+                                Bấm kiểm tra, nếu có đơn đang chờ hệ thống sẽ hiển thị thông tin tủ. Sau đó nhập OTP mà hệ thống gửi cho bạn.
+                            </p>
+
+                            <button id="btnCheckPickup" class="btn-secondary" onclick="checkReceiverReservation()">
+                                <i class="fas fa-magnifying-glass"></i> Kiểm tra đơn hàng đang chờ
+                            </button>
+
+                            <div id="pickupStatus" style="margin-top:6px; font-size:12px; display:none;"></div>
+
+                            <div id="pickupDetail" style="display:none; margin-top:6px;">
+                                <div class="pickup-info-row">
+                                    <strong>Tủ: </strong><span id="pickupLocker">-</span>
+                                </div>
+                                <div class="pickup-info-row">
+                                    <strong>Trạng thái: </strong><span id="pickupStatusText">-</span>
+                                </div>
+                                <div class="pickup-info-row">
+                                    <strong>Hết hạn: </strong><span id="pickupExpire">-</span>
+                                </div>
+                            </div>
+
+                            <div id="pickupOtpBox" style="display:none; margin-top:8px;">
+                                <label for="pickupOtp" style="margin-top:4px;">Nhập OTP nhận hàng:</label>
+                                <input type="text" id="pickupOtp" placeholder="6 số OTP nhận hàng">
+                                <button id="btnPickupOpen" class="btn-primary" style="margin-top:8px;" onclick="verifyPickupOtp()">
+                                    <i class="fas fa-door-open"></i> Mở tủ lấy hàng
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- LỊCH SỬ -->
+                        <p style="margin-top:10px;">
+                            <strong>Lịch sử đặt tủ</strong> – Các lượt đặt tủ gần đây của số điện thoại này.
                         </p>
 
                         <button class="btn-secondary" onclick="loadReservations()">
@@ -544,7 +607,7 @@
             }
         }
 
-        // Tabs Đặt tủ / Lịch sử
+        // Tabs Đặt tủ / Lịch sử & Nhận hàng
         const tabReserve = document.getElementById("tabReserve");
         const tabHistory = document.getElementById("tabHistory");
         const sectionReserve = document.getElementById("sectionReserve");
@@ -570,12 +633,10 @@
         tabHistory.addEventListener("click", () => showSection("history"));
     </script>
 
-    <!-- Nếu bạn còn muốn dùng script.js để hiển thị trạng thái kết nối tủ, có thể include lại -->
-    <!-- <script src="script.js"></script> -->
-
-    <!-- Logic ĐẶT TỦ & LỊCH SỬ (giữ nguyên logic, chỉ thay chút UI) -->
+    <!-- Logic ĐẶT TỦ & LỊCH SỬ & NHẬN HÀNG -->
     <script>
         const API_BASE = "http://localhost:3000/api";
+        let currentPickupReservationId = null;
 
         function setReserveLoading(loading) {
             const btn = document.getElementById("reserveBtn");
@@ -690,8 +751,127 @@
             }
         }
 
+        async function checkReceiverReservation() {
+            const statusEl = document.getElementById("pickupStatus");
+            const detailEl = document.getElementById("pickupDetail");
+            const otpBox = document.getElementById("pickupOtpBox");
+
+            if (statusEl) {
+                statusEl.style.display = "none";
+                statusEl.textContent = "";
+            }
+            if (detailEl) detailEl.style.display = "none";
+            if (otpBox) otpBox.style.display = "none";
+            currentPickupReservationId = null;
+
+            try {
+                const res = await fetch(`${API_BASE}/receiver/check-reservation`, {
+                    method: "POST",
+                    headers: {
+                        ...authManager.getAuthHeaders(),
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({})
+                });
+
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.error || "Không kiểm tra được đơn hàng");
+                }
+
+                if (!data.hasReservation) {
+                    if (statusEl) {
+                        statusEl.style.display = "block";
+                        statusEl.style.color = "#9ca3af";
+                        statusEl.textContent = "Hiện tại bạn không có đơn hàng nào đang chờ trong tủ.";
+                    }
+                    return;
+                }
+
+                const r = data.reservation;
+                currentPickupReservationId = r.id;
+
+                if (detailEl) {
+                    detailEl.style.display = "block";
+                    document.getElementById("pickupLocker").textContent = r.lockerId || "Locker1";
+                    document.getElementById("pickupStatusText").textContent = r.status || "-";
+                    document.getElementById("pickupExpire").textContent =
+                        r.expiresAt ? new Date(r.expiresAt).toLocaleString("vi-VN") : "-";
+                }
+
+                if (otpBox) {
+                    otpBox.style.display = "block";
+                }
+
+                if (statusEl) {
+                    statusEl.style.display = "block";
+                    statusEl.style.color = "#166534";
+                    statusEl.textContent = "Đã tìm thấy đơn hàng đang chờ. Vui lòng nhập OTP để mở tủ.";
+                }
+            } catch (err) {
+                console.error(err);
+                if (statusEl) {
+                    statusEl.style.display = "block";
+                    statusEl.style.color = "#b91c1c";
+                    statusEl.textContent = err.message || "Có lỗi xảy ra khi kiểm tra đơn hàng.";
+                }
+            }
+        }
+
+        async function verifyPickupOtp() {
+            const otpInput = document.getElementById("pickupOtp");
+            const otpCode = otpInput ? otpInput.value.trim() : "";
+
+            if (!currentPickupReservationId) {
+                alert("Bạn chưa có đơn hàng nào được chọn. Hãy bấm 'Kiểm tra đơn hàng đang chờ' trước.");
+                return;
+            }
+
+            if (!otpCode) {
+                alert("Vui lòng nhập OTP nhận hàng.");
+                return;
+            }
+
+            const btn = document.getElementById("btnPickupOpen");
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang mở tủ...';
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/receiver/verify-and-open`, {
+                    method: "POST",
+                    headers: {
+                        ...authManager.getAuthHeaders(),
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        reservationId: currentPickupReservationId,
+                        otpCode
+                    })
+                });
+
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.error || "Không mở được tủ. Vui lòng kiểm tra lại OTP.");
+                }
+
+                alert("Mở tủ thành công! Bạn có thể ra tủ để lấy hàng.");
+                // Sau khi lấy hàng xong, load lại lịch sử
+                loadReservations();
+            } catch (err) {
+                console.error(err);
+                alert(err.message || "Có lỗi xảy ra khi mở tủ.");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-door-open"></i> Mở tủ lấy hàng';
+                }
+            }
+        }
+
         document.addEventListener("DOMContentLoaded", () => {
-            // Mặc định load lịch sử một lần (để khi chuyển tab là có sẵn)
+            // Mặc định load lịch sử một lần
             loadReservations();
         });
     </script>
