@@ -3,137 +3,488 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔒 Bảng điều khiển Tủ khóa Thông minh</title>
-    <link rel="stylesheet" href="style.css">
+    <title>🔒 Smart Locker - Bảng điều khiển cư dân</title>
+
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+    <!-- Font giống trang auth -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --wood-bg-1: #fff7d9;
+            --wood-bg-2: #f6cf7c;
+            --wood-accent: #f4a226;
+            --wood-accent-dark: #c97a12;
+            --wood-text: #4b3b2a;
+            --error: #dc2626;
+            --success: #16a34a;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at top left, var(--wood-bg-1), var(--wood-bg-2));
+            color: var(--wood-text);
+        }
+
+        .dash-shell {
+            width: 100%;
+            max-width: 900px;
+            padding: 16px;
+        }
+
+        .dash-card {
+            background: rgba(255, 255, 255, 0.96);
+            border-radius: 22px;
+            box-shadow:
+                0 22px 45px rgba(0, 0, 0, 0.12),
+                0 0 0 1px rgba(0, 0, 0, 0.03);
+            padding: 18px 18px 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dash-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(135deg, rgba(244, 162, 38, 0.08), transparent 55%),
+                repeating-linear-gradient(
+                    -45deg,
+                    rgba(249, 207, 124, 0.08),
+                    rgba(249, 207, 124, 0.08) 6px,
+                    transparent 6px,
+                    transparent 12px
+                );
+            pointer-events: none;
+        }
+
+        .dash-inner {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+
+        .dash-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .brand-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 14px;
+            background: linear-gradient(145deg, var(--wood-accent), var(--wood-accent-dark));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 22px;
+            box-shadow: 0 6px 14px rgba(201, 122, 18, 0.5);
+        }
+
+        .brand-text h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .brand-text p {
+            margin: 2px 0 0;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .user-info {
+            text-align: right;
+            font-size: 12px;
+        }
+
+        .user-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            background: rgba(255, 237, 213, 0.9);
+            border: 1px solid rgba(148, 121, 72, 0.35);
+            color: var(--wood-text);
+        }
+
+        #userRoleBadge {
+            margin-left: 4px;
+            border-radius: 999px;
+            padding: 1px 7px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .btn-logout {
+            background: linear-gradient(135deg, #f97316, #b45309);
+            color: #fff;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 999px;
+            cursor: pointer;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 4px 8px rgba(180, 83, 9, 0.4);
+        }
+
+        .btn-logout:hover {
+            filter: brightness(1.05);
+            transform: translateY(-1px);
+        }
+
+        /* Status strip (optional small info) */
+
+        .status-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #fffbeb;
+            border: 1px dashed rgba(180, 119, 41, 0.45);
+            font-size: 11px;
+            margin-bottom: 10px;
+        }
+
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #22c55e;
+        }
+
+        /* Tabs */
+
+        .dash-tabs {
+            display: inline-flex;
+            border-radius: 999px;
+            background: rgba(255, 237, 213, 0.9);
+            padding: 4px;
+            margin-top: 8px;
+            margin-bottom: 6px;
+        }
+
+        .dash-tab {
+            border-radius: 999px;
+            border: none;
+            padding: 7px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: transparent;
+            color: rgba(76, 57, 34, 0.8);
+        }
+
+        .dash-tab.active {
+            background: linear-gradient(135deg, var(--wood-accent), var(--wood-accent-dark));
+            color: #fff;
+            box-shadow: 0 4px 10px rgba(201, 122, 18, 0.45);
+        }
+
+        .dash-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr);
+            gap: 14px;
+            margin-top: 10px;
+        }
+
+        @media (max-width: 800px) {
+            .dash-body {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .dash-section {
+            border-radius: 18px;
+            padding: 12px 12px 10px;
+            background: rgba(255, 250, 235, 0.95);
+            border: 1px solid rgba(212, 163, 72, 0.4);
+            font-size: 13px;
+        }
+
+        .dash-section.hidden {
+            display: none;
+        }
+
+        .dash-section h3 {
+            margin: 0 0 6px;
+            font-size: 15px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dash-section p {
+            margin: 0 0 8px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        label {
+            display: block;
+            margin-top: 8px;
+            font-size: 13px;
+        }
+
+        select,
+        input[type="number"] {
+            width: 100%;
+            padding: 7px 9px;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 121, 72, 0.4);
+            outline: none;
+            font-size: 13px;
+            margin-top: 2px;
+            background: rgba(255, 255, 255, 0.9);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+        }
+
+        select:focus,
+        input[type="number"]:focus {
+            border-color: var(--wood-accent);
+            box-shadow: 0 0 0 1px rgba(244, 162, 38, 0.25),
+                        0 0 0 4px rgba(244, 162, 38, 0.1);
+            background: #fffbeb;
+        }
+
+        .btn-primary {
+            margin-top: 10px;
+            padding: 7px 13px;
+            border-radius: 999px;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: linear-gradient(135deg, #22c55e, #15803d);
+            color: #fff;
+            box-shadow: 0 4px 10px rgba(21, 128, 61, 0.5);
+        }
+
+        .btn-secondary {
+            margin-top: 6px;
+            padding: 5px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 121, 72, 0.5);
+            cursor: pointer;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #fffbeb;
+            color: var(--wood-text);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.7;
+            cursor: wait;
+            box-shadow: none;
+        }
+
+        #reserveResult {
+            margin-top: 9px;
+            font-size: 12px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: rgba(22, 163, 74, 0.08);
+            border: 1px solid rgba(22, 163, 74, 0.5);
+            color: #166534;
+        }
+
+        /* Lịch sử */
+
+        #historyEmpty {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #9ca3af;
+            font-style: italic;
+        }
+
+        #historyTable {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+            font-size: 11px;
+        }
+
+        #historyTable th,
+        #historyTable td {
+            padding: 4px 6px;
+            border-bottom: 1px solid rgba(148, 121, 72, 0.4);
+            text-align: left;
+        }
+
+        #historyTable th {
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        .footer-note {
+            margin-top: 10px;
+            font-size: 11px;
+            text-align: right;
+            opacity: 0.75;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1><i class="fas fa-lock"></i> Hệ thống Tủ khóa Thông minh</h1>
-            <div class="status-indicator">
-                <span id="connectionStatus" class="status-dot offline"></span>
-                <span id="connectionText">Đang kết nối...</span>
-            </div>
-            <div class="user-info" style="margin-top: 10px; text-align: right;">
-                <span style="color: white; margin-right: 15px;">
-                    <i class="fas fa-user"></i>
-                    <span id="userPhone"></span>
-                    <span id="userRoleBadge" style="margin-left:8px; border:1px solid rgba(255,255,255,0.3); padding:2px 6px; border-radius:999px; font-size:11px;"></span>
-                </span>
-                <button onclick="authManager.logout()" style="background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3); padding: 5px 10px; border-radius: 5px; cursor: pointer;">
-                    <i class="fas fa-sign-out-alt"></i> Đăng xuất
-                </button>
-            </div>
-        </header>
+    <div class="dash-shell">
+        <div class="dash-card">
+            <div class="dash-inner">
+                <!-- HEADER -->
+                <header class="dash-header">
+                    <div class="brand-left">
+                        <div class="brand-icon">
+                            <i class="fas fa-lock"></i>
+                        </div>
+                        <div class="brand-text">
+                            <h1>Smart Locker Chung Cư</h1>
+                            <p>Đặt tủ gửi đồ & xem lịch sử bằng số điện thoại</p>
+                        </div>
+                    </div>
 
-        <!-- Main Control Panel -->
-        <div class="control-panel">
-            <div class="locker-card">
-                <div class="locker-header">
-                    <h2><i class="fas fa-door-open"></i> Locker 1</h2>
-                    <div class="locker-status" id="lockerStatus">
-                        <span class="status-icon">🔒</span>
-                        <span class="status-text">Đóng</span>
+                    <div class="user-info">
+                        <div class="user-pill">
+                            <i class="fas fa-user"></i>
+                            <span id="userPhone">--</span>
+                            <span id="userRoleBadge"></span>
+                        </div>
+                        <div>
+                            <button class="btn-logout" onclick="authManager.logout()">
+                                <i class="fas fa-sign-out-alt"></i> Đăng xuất
+                            </button>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- STATUS NHỎ -->
+                <div class="status-strip">
+                    <div class="status-chip">
+                        <span class="status-dot" id="connectionStatus"></span>
+                        <span id="connectionText">Đang kết nối tủ...</span>
+                    </div>
+                    <div style="font-size: 11px; opacity: 0.85;">
+                        <i class="fas fa-circle-info"></i>
+                        Bạn có thể đặt tủ và gửi mã cho shipper, sau đó theo dõi ở lịch sử.
                     </div>
                 </div>
 
-                <div class="locker-controls">
-                    <button id="openBtn" class="btn btn-open" onclick="controlLocker('open')">
-                        <i class="fas fa-unlock"></i>
-                        Mở Tủ
+                <!-- TABS -->
+                <div class="dash-tabs">
+                    <button id="tabReserve" class="dash-tab active">
+                        <i class="fas fa-box-open"></i>
+                        Đặt tủ gửi đồ
                     </button>
-                    <button id="closeBtn" class="btn btn-close" onclick="controlLocker('close')">
-                        <i class="fas fa-lock"></i>
-                        Đóng Tủ
+                    <button id="tabHistory" class="dash-tab">
+                        <i class="fas fa-clock-rotate-left"></i>
+                        Lịch sử đặt tủ
                     </button>
                 </div>
 
-                <div class="locker-info">
-                    <div class="info-item">
-                        <i class="fas fa-clock"></i>
-                        <span>Cập nhật lần cuối:</span>
-                        <span id="lastUpdate">--:--:--</span>
-                    </div>
-                    <div class="info-item">
-                        <i class="fas fa-wifi"></i>
-                        <span>Kết nối:</span>
-                        <span id="wifiStatus">Đang kiểm tra...</span>
-                    </div>
+                <!-- MAIN BODY -->
+                <div class="dash-body">
+                    <!-- PANEL ĐẶT TỦ -->
+                    <section id="sectionReserve" class="dash-section">
+                        <h3><i class="fas fa-box-open"></i> Đặt tủ gửi đồ</h3>
+                        <p>
+                            Chọn tủ muốn đặt. Hệ thống sẽ tạo mã đặt tủ, bạn gửi mã đó cho shipper để họ bỏ hàng vào.
+                        </p>
+
+                        <div class="setting-item">
+                            <label for="lockerSelect">Chọn tủ:</label>
+                            <select id="lockerSelect">
+                                <option value="Locker1">Locker 1</option>
+                                <!-- sau này có thể thêm Locker2, Locker3... -->
+                            </select>
+                        </div>
+
+                        <button id="reserveBtn" class="btn-primary" onclick="reserveLocker()">
+                            <i class="fas fa-calendar-plus"></i> Đặt tủ
+                        </button>
+
+                        <div id="reserveResult" style="display:none;"></div>
+                    </section>
+
+                    <!-- PANEL LỊCH SỬ -->
+                    <section id="sectionHistory" class="dash-section hidden">
+                        <h3><i class="fas fa-clock-rotate-left"></i> Lịch sử đặt tủ</h3>
+                        <p>
+                            Các lượt đặt tủ gần đây của số điện thoại này.
+                        </p>
+
+                        <button class="btn-secondary" onclick="loadReservations()">
+                            <i class="fas fa-rotate-right"></i> Tải lại lịch sử
+                        </button>
+
+                        <div id="historyEmpty" style="display:none;">
+                            Chưa có lượt đặt tủ nào.
+                        </div>
+
+                        <table id="historyTable" style="display:none;">
+                            <thead>
+                                <tr>
+                                    <th>Thời gian</th>
+                                    <th>Tủ</th>
+                                    <th>Mã đặt tủ</th>
+                                    <th>Trạng thái</th>
+                                    <th>Hết hạn</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody"></tbody>
+                        </table>
+                    </section>
+                </div>
+
+                <div class="footer-note">
+                    <i class="fas fa-lightbulb"></i>
+                    Gợi ý: Chụp màn hình mã đặt tủ để gửi nhanh cho shipper.
                 </div>
             </div>
-        </div>
-
-        <!-- Activity Log -->
-        <div class="activity-log">
-            <h3><i class="fas fa-history"></i> Lịch sử hoạt động</h3>
-            <div id="activityList" class="activity-list">
-                <div class="activity-item">
-                    <span class="time">--:--:--</span>
-                    <span class="action">Hệ thống khởi động</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Settings -->
-        <div class="settings-panel">
-            <h3><i class="fas fa-cog"></i> Cài đặt</h3>
-            <div class="setting-item">
-                <label for="autoCloseTime">Thời gian tự đóng (giây):</label>
-                <input type="number" id="autoCloseTime" value="10" min="5" max="60">
-            </div>
-            <div class="setting-item">
-                <label for="checkInterval">Tần suất kiểm tra (giây):</label>
-                <input type="number" id="checkInterval" value="1" min="1" max="10">
-            </div>
-        </div>
-
-        <!-- ======= KHU ĐẶT TỦ GỬI ĐỒ ======= -->
-        <div class="settings-panel">
-            <h3><i class="fas fa-box-open"></i> Đặt tủ gửi đồ</h3>
-            <p style="font-size: 13px; color:#cbd5f5;">
-                Chọn tủ muốn đặt. Hệ thống tạo mã đặt tủ, bạn gửi mã đó cho shipper.
-            </p>
-            <div class="setting-item">
-                <label for="lockerSelect">Chọn tủ:</label>
-                <select id="lockerSelect">
-                    <option value="Locker1">Locker 1</option>
-                    <!-- sau này có thể thêm Locker2, Locker3... -->
-                </select>
-            </div>
-            <button id="reserveBtn" style="margin-top:10px; padding:6px 12px; border-radius:6px; border:none; cursor:pointer; background:#22c55e; color:white; font-size:14px;" onclick="reserveLocker()">
-                <i class="fas fa-calendar-plus"></i> Đặt tủ
-            </button>
-            <div id="reserveResult" style="display:none; margin-top:10px; font-size:13px; padding:8px 10px; border-radius:8px; background:rgba(22,163,74,0.08); border:1px solid rgba(22,163,74,0.5); color:#bbf7d0;"></div>
-        </div>
-
-        <!-- ======= KHU LỊCH SỬ ĐẶT TỦ ======= -->
-        <div class="settings-panel">
-            <h3><i class="fas fa-clock-rotate-left"></i> Lịch sử đặt tủ</h3>
-            <p style="font-size: 13px; color:#cbd5f5;">
-                Các lượt đặt tủ gần đây của số điện thoại này.
-            </p>
-            <button style="margin-top:4px; padding:4px 10px; border-radius:6px; border:1px solid rgba(148,163,184,0.6); background:transparent; color:#e5e7eb; font-size:13px; cursor:pointer;" onclick="loadReservations()">
-                <i class="fas fa-rotate-right"></i> Tải lại lịch sử
-            </button>
-
-            <div id="historyEmpty" style="display:none; margin-top:8px; font-size:12px; color:#9ca3af; font-style:italic;">
-                Chưa có lượt đặt tủ nào.
-            </div>
-
-            <table id="historyTable" style="width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; display:none;">
-                <thead>
-                    <tr>
-                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Thời gian</th>
-                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Tủ</th>
-                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Mã đặt tủ</th>
-                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Trạng thái</th>
-                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Hết hạn</th>
-                    </tr>
-                </thead>
-                <tbody id="historyTableBody"></tbody>
-            </table>
         </div>
     </div>
 
@@ -155,7 +506,7 @@
         const app = initializeApp(firebaseConfig);
         const database = getDatabase(app);
 
-        // Make database available globally
+        // Make database available globally (nếu script.js cần)
         window.database = database;
         window.ref = ref;
         window.onValue = onValue;
@@ -168,12 +519,14 @@
     <!-- Auth -->
     <script src="auth.js"></script>
     <script>
-        // Kiểm tra đăng nhập
+        // Kiểm tra đăng nhập & hiển thị info user
         if (!authManager.requireAuth()) {
             // sẽ redirect về login nếu chưa đăng nhập
         } else {
-            document.getElementById('userPhone').textContent =
-                authManager.formatPhoneNumber(authManager.phoneNumber);
+            const phoneSpan = document.getElementById('userPhone');
+            if (phoneSpan) {
+                phoneSpan.textContent = authManager.formatPhoneNumber(authManager.phoneNumber);
+            }
 
             const role = localStorage.getItem("role") || "resident";
             const rb = document.getElementById("userRoleBadge");
@@ -181,16 +534,46 @@
                 rb.textContent = role;
                 if (role === "admin") {
                     rb.style.borderColor = "#fbbf24";
-                    rb.style.color = "#facc15";
+                    rb.style.color = "#92400e";
+                    rb.style.background = "rgba(252, 211, 77, 0.4)";
+                } else {
+                    rb.style.borderColor = "rgba(148,121,72,0.5)";
+                    rb.style.color = "rgba(76,57,34,0.9)";
+                    rb.style.background = "rgba(255,237,213,0.8)";
                 }
             }
         }
+
+        // Tabs Đặt tủ / Lịch sử
+        const tabReserve = document.getElementById("tabReserve");
+        const tabHistory = document.getElementById("tabHistory");
+        const sectionReserve = document.getElementById("sectionReserve");
+        const sectionHistory = document.getElementById("sectionHistory");
+
+        function showSection(name) {
+            if (name === "reserve") {
+                tabReserve.classList.add("active");
+                tabHistory.classList.remove("active");
+                sectionReserve.classList.remove("hidden");
+                sectionHistory.classList.add("hidden");
+            } else {
+                tabHistory.classList.add("active");
+                tabReserve.classList.remove("active");
+                sectionHistory.classList.remove("hidden");
+                sectionReserve.classList.add("hidden");
+                // mỗi lần chuyển sang tab lịch sử thì tải lại
+                loadReservations();
+            }
+        }
+
+        tabReserve.addEventListener("click", () => showSection("reserve"));
+        tabHistory.addEventListener("click", () => showSection("history"));
     </script>
 
-    <!-- Logic điều khiển tủ (giữ như cũ) -->
-    <script src="script.js"></script>
+    <!-- Nếu bạn còn muốn dùng script.js để hiển thị trạng thái kết nối tủ, có thể include lại -->
+    <!-- <script src="script.js"></script> -->
 
-    <!-- Logic ĐẶT TỦ & LỊCH SỬ -->
+    <!-- Logic ĐẶT TỦ & LỊCH SỬ (giữ nguyên logic, chỉ thay chút UI) -->
     <script>
         const API_BASE = "http://localhost:3000/api";
 
@@ -290,16 +673,14 @@
                         ? new Date(r.expiresAt).toLocaleString("vi-VN")
                         : "-";
 
-                    let statusLabel = r.status || "unknown";
-                    let statusColorClass = "badge-status";
+                    const statusLabel = r.status || "unknown";
 
-                    // đơn giản: tô màu bằng text
                     tr.innerHTML = `
-                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${createdAt}</td>
-                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${r.lockerId || "-"}</td>
-                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${r.bookingCode || "-"}</td>
-                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${statusLabel}</td>
-                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${expiresAt}</td>
+                        <td>${createdAt}</td>
+                        <td>${r.lockerId || "-"}</td>
+                        <td>${r.bookingCode || "-"}</td>
+                        <td>${statusLabel}</td>
+                        <td>${expiresAt}</td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -310,6 +691,7 @@
         }
 
         document.addEventListener("DOMContentLoaded", () => {
+            // Mặc định load lịch sử một lần (để khi chuyển tab là có sẵn)
             loadReservations();
         });
     </script>
