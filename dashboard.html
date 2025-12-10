@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔒 Bảng điều khiển Tủ khóa Thông minh</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1><i class="fas fa-lock"></i> Hệ thống Tủ khóa Thông minh</h1>
+            <div class="status-indicator">
+                <span id="connectionStatus" class="status-dot offline"></span>
+                <span id="connectionText">Đang kết nối...</span>
+            </div>
+            <div class="user-info" style="margin-top: 10px; text-align: right;">
+                <span style="color: white; margin-right: 15px;">
+                    <i class="fas fa-user"></i>
+                    <span id="userPhone"></span>
+                    <span id="userRoleBadge" style="margin-left:8px; border:1px solid rgba(255,255,255,0.3); padding:2px 6px; border-radius:999px; font-size:11px;"></span>
+                </span>
+                <button onclick="authManager.logout()" style="background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3); padding: 5px 10px; border-radius: 5px; cursor: pointer;">
+                    <i class="fas fa-sign-out-alt"></i> Đăng xuất
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Control Panel -->
+        <div class="control-panel">
+            <div class="locker-card">
+                <div class="locker-header">
+                    <h2><i class="fas fa-door-open"></i> Locker 1</h2>
+                    <div class="locker-status" id="lockerStatus">
+                        <span class="status-icon">🔒</span>
+                        <span class="status-text">Đóng</span>
+                    </div>
+                </div>
+
+                <div class="locker-controls">
+                    <button id="openBtn" class="btn btn-open" onclick="controlLocker('open')">
+                        <i class="fas fa-unlock"></i>
+                        Mở Tủ
+                    </button>
+                    <button id="closeBtn" class="btn btn-close" onclick="controlLocker('close')">
+                        <i class="fas fa-lock"></i>
+                        Đóng Tủ
+                    </button>
+                </div>
+
+                <div class="locker-info">
+                    <div class="info-item">
+                        <i class="fas fa-clock"></i>
+                        <span>Cập nhật lần cuối:</span>
+                        <span id="lastUpdate">--:--:--</span>
+                    </div>
+                    <div class="info-item">
+                        <i class="fas fa-wifi"></i>
+                        <span>Kết nối:</span>
+                        <span id="wifiStatus">Đang kiểm tra...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="activity-log">
+            <h3><i class="fas fa-history"></i> Lịch sử hoạt động</h3>
+            <div id="activityList" class="activity-list">
+                <div class="activity-item">
+                    <span class="time">--:--:--</span>
+                    <span class="action">Hệ thống khởi động</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="settings-panel">
+            <h3><i class="fas fa-cog"></i> Cài đặt</h3>
+            <div class="setting-item">
+                <label for="autoCloseTime">Thời gian tự đóng (giây):</label>
+                <input type="number" id="autoCloseTime" value="10" min="5" max="60">
+            </div>
+            <div class="setting-item">
+                <label for="checkInterval">Tần suất kiểm tra (giây):</label>
+                <input type="number" id="checkInterval" value="1" min="1" max="10">
+            </div>
+        </div>
+
+        <!-- ======= KHU ĐẶT TỦ GỬI ĐỒ ======= -->
+        <div class="settings-panel">
+            <h3><i class="fas fa-box-open"></i> Đặt tủ gửi đồ</h3>
+            <p style="font-size: 13px; color:#cbd5f5;">
+                Chọn tủ muốn đặt. Hệ thống tạo mã đặt tủ, bạn gửi mã đó cho shipper.
+            </p>
+            <div class="setting-item">
+                <label for="lockerSelect">Chọn tủ:</label>
+                <select id="lockerSelect">
+                    <option value="Locker1">Locker 1</option>
+                    <!-- sau này có thể thêm Locker2, Locker3... -->
+                </select>
+            </div>
+            <button id="reserveBtn" style="margin-top:10px; padding:6px 12px; border-radius:6px; border:none; cursor:pointer; background:#22c55e; color:white; font-size:14px;" onclick="reserveLocker()">
+                <i class="fas fa-calendar-plus"></i> Đặt tủ
+            </button>
+            <div id="reserveResult" style="display:none; margin-top:10px; font-size:13px; padding:8px 10px; border-radius:8px; background:rgba(22,163,74,0.08); border:1px solid rgba(22,163,74,0.5); color:#bbf7d0;"></div>
+        </div>
+
+        <!-- ======= KHU LỊCH SỬ ĐẶT TỦ ======= -->
+        <div class="settings-panel">
+            <h3><i class="fas fa-clock-rotate-left"></i> Lịch sử đặt tủ</h3>
+            <p style="font-size: 13px; color:#cbd5f5;">
+                Các lượt đặt tủ gần đây của số điện thoại này.
+            </p>
+            <button style="margin-top:4px; padding:4px 10px; border-radius:6px; border:1px solid rgba(148,163,184,0.6); background:transparent; color:#e5e7eb; font-size:13px; cursor:pointer;" onclick="loadReservations()">
+                <i class="fas fa-rotate-right"></i> Tải lại lịch sử
+            </button>
+
+            <div id="historyEmpty" style="display:none; margin-top:8px; font-size:12px; color:#9ca3af; font-style:italic;">
+                Chưa có lượt đặt tủ nào.
+            </div>
+
+            <table id="historyTable" style="width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; display:none;">
+                <thead>
+                    <tr>
+                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Thời gian</th>
+                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Tủ</th>
+                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Mã đặt tủ</th>
+                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Trạng thái</th>
+                        <th style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">Hết hạn</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Firebase SDK v12 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+        import { getDatabase, ref, onValue, set, get } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBqfcOprdE5MT6m1yfXmRDtCzngtX86-7U",
+            authDomain: "minhquang-36ee2.firebaseapp.com",
+            databaseURL: "https://minhquang-36ee2-default-rtdb.firebaseio.com",
+            projectId: "minhquang-36ee2",
+            storageBucket: "minhquang-36ee2.firebasestorage.app",
+            messagingSenderId: "986858991599",
+            appId: "1:986858991599:web:53c36493204131a10c501a"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const database = getDatabase(app);
+
+        // Make database available globally
+        window.database = database;
+        window.ref = ref;
+        window.onValue = onValue;
+        window.set = set;
+        window.get = get;
+
+        console.log('✅ Firebase v12 đã khởi tạo thành công');
+    </script>
+
+    <!-- Auth -->
+    <script src="auth.js"></script>
+    <script>
+        // Kiểm tra đăng nhập
+        if (!authManager.requireAuth()) {
+            // sẽ redirect về login nếu chưa đăng nhập
+        } else {
+            document.getElementById('userPhone').textContent =
+                authManager.formatPhoneNumber(authManager.phoneNumber);
+
+            const role = localStorage.getItem("role") || "resident";
+            const rb = document.getElementById("userRoleBadge");
+            if (rb) {
+                rb.textContent = role;
+                if (role === "admin") {
+                    rb.style.borderColor = "#fbbf24";
+                    rb.style.color = "#facc15";
+                }
+            }
+        }
+    </script>
+
+    <!-- Logic điều khiển tủ (giữ như cũ) -->
+    <script src="script.js"></script>
+
+    <!-- Logic ĐẶT TỦ & LỊCH SỬ -->
+    <script>
+        const API_BASE = "http://localhost:3000/api";
+
+        function setReserveLoading(loading) {
+            const btn = document.getElementById("reserveBtn");
+            if (!btn) return;
+            if (loading) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang đặt...';
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-calendar-plus"></i> Đặt tủ';
+            }
+        }
+
+        async function reserveLocker() {
+            const lockerId = document.getElementById("lockerSelect").value;
+            const resultEl = document.getElementById("reserveResult");
+
+            if (!lockerId) {
+                alert("Vui lòng chọn tủ.");
+                return;
+            }
+
+            if (resultEl) resultEl.style.display = "none";
+            setReserveLoading(true);
+
+            try {
+                const res = await fetch(`${API_BASE}/user/reserve-locker`, {
+                    method: "POST",
+                    headers: authManager.getAuthHeaders(),
+                    body: JSON.stringify({ lockerId })
+                });
+
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || "Đặt tủ thất bại");
+                }
+
+                if (resultEl) {
+                    const expireText = new Date(data.expiresAt).toLocaleString("vi-VN");
+                    resultEl.innerHTML = `
+                        <strong>Đặt tủ thành công!</strong><br>
+                        Tủ: <b>${data.lockerId}</b><br>
+                        Mã đặt tủ: <b>${data.bookingCode}</b><br>
+                        Hạn sử dụng: ${expireText}<br>
+                        <span style="font-size:12px; color:#9ca3af;">Hãy gửi mã này cho shipper.</span>
+                    `;
+                    resultEl.style.display = "block";
+                }
+
+                // load lại lịch sử
+                loadReservations();
+            } catch (err) {
+                console.error(err);
+                alert(err.message || "Không thể đặt tủ.");
+            } finally {
+                setReserveLoading(false);
+            }
+        }
+
+        async function loadReservations() {
+            const table = document.getElementById("historyTable");
+            const tbody = document.getElementById("historyTableBody");
+            const emptyEl = document.getElementById("historyEmpty");
+            if (!tbody) return;
+
+            tbody.innerHTML = "";
+            if (emptyEl) emptyEl.style.display = "none";
+            if (table) table.style.display = "none";
+
+            try {
+                const res = await fetch(`${API_BASE}/user/reservations`, {
+                    method: "GET",
+                    headers: authManager.getAuthHeaders()
+                });
+
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || "Không lấy được lịch sử");
+                }
+
+                const reservations = data.reservations || [];
+                if (!reservations.length) {
+                    if (emptyEl) emptyEl.style.display = "block";
+                    return;
+                }
+
+                if (table) table.style.display = "table";
+
+                reservations.forEach(r => {
+                    const tr = document.createElement("tr");
+                    const createdAt = r.createdAt
+                        ? new Date(r.createdAt).toLocaleString("vi-VN")
+                        : "-";
+                    const expiresAt = r.expiresAt
+                        ? new Date(r.expiresAt).toLocaleString("vi-VN")
+                        : "-";
+
+                    let statusLabel = r.status || "unknown";
+                    let statusColorClass = "badge-status";
+
+                    // đơn giản: tô màu bằng text
+                    tr.innerHTML = `
+                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${createdAt}</td>
+                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${r.lockerId || "-"}</td>
+                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${r.bookingCode || "-"}</td>
+                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${statusLabel}</td>
+                        <td style="border-bottom:1px solid rgba(31,41,55,0.9); padding:4px;">${expiresAt}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                console.error(err);
+                alert(err.message || "Không thể tải lịch sử đặt tủ.");
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            loadReservations();
+        });
+    </script>
+</body>
+</html>
