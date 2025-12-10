@@ -106,4 +106,5 @@ adruino-backend/serviceAccountKey.json
 # Temporary files
 -n/
 
+package-lock.json
 
