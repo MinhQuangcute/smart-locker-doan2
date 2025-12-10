@@ -46,12 +46,14 @@ function getRoleForPhone(phoneNumber) {
   return ADMIN_PHONES.includes(norm) ? "admin" : "resident";
 }
 
+
 // =======================
-// 1.Kết nối Firebase
+// 1. Kết nối Firebase
 // =======================
 const serviceAccount = JSON.parse(
-  fs.readFileSync("./serviceAccountKey.json", "utf8")
+  fs.readFileSync(path.join(__dirname, "serviceAccountKey.json"), "utf8")
 );
+
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
