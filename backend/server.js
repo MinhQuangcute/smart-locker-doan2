@@ -10,6 +10,8 @@ const { v4: uuidv4 } = require("uuid");
 require("dotenv").config();
 // giau secretkey vao .env
 
+const cookieParser = require("cookie-parser");
+// cookie-parser: xử lý cookie trong request
 // Danh sách tủ logic theo kích thước (demo)
 // Thực tế: mỗi lockerId có thể là 1 ngăn tủ thật.
 const LOCKERS_BY_SIZE = {
@@ -73,13 +75,17 @@ const db = admin.database();
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
-
+app.use(cookieParser());
+// cookie-parser: xử lý cookie
 const PORT = process.env.PORT ||3000;
 const JWT_SECRET = process.env.JWT_SECRET || "bimatnho";
+
+
  // nhớ đổi khi lên production
  //process.env.JWT_SECRET: lấy giá trị từ biến môi trường JWT_SECRET.
 //Nếu không có (vd: quên set, hoặc đang dev lười tạo .env), thì dùng tạm "dev-secret" cho khỏi crash.
-
+const isProduction = process.env.NODE_ENV === "production";
+// production là true nếu NODE_ENV là "production", ngược lại là false.
 // =======================
 // Phone Auth Configuration
 // =======================
@@ -91,15 +97,34 @@ const RESERVATION_EXPIRY_HOURS = 24 * 3;
 // =======================
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "Token missing" });
+  let token = null;
+
+  // 1) Ưu tiên header Authorization (Postman, debug)
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  }
+
+  // 2) Nếu không có header thì dùng cookie (trình duyệt)
+  if (!token && req.cookies && req.cookies.authToken) {
+    token = req.cookies.authToken;
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: "Token missing" });
+  }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: "Invalid token" });
+    if (err) {
+      console.error("JWT verify error:", err);
+      return res.status(403).json({ error: "Invalid token" });
+    }
     req.user = user;
     next();
   });
 }
+//Postman vẫn dùng header Authorization: Bearer ... như cũ.
+//Web browser thì không cần gắn header, chỉ cần cookie.
+
 //middleware xác thực admin
 function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {
@@ -208,16 +233,21 @@ app.post("/api/auth/send-otp", async (req, res) => {
       `⏰ Expires at: ${new Date(expiresAt).toLocaleString("vi-VN")}`
     );
 
-    res.json({
+    const responseData = {
       success: true,
       verificationId: verificationId,
       message: "OTP sent successfully",
-      otpCode: otpCode, // dev only
       expiresAt: expiresAt,
-    });
+    };
+    //Chỉ trả otpCode khi KHÔNG phải production (dev, test)
+if (!isProduction) {
+  responseData.otpCode = otpCode;
+}
+
+return res.json(responseData);
   } catch (error) {
     console.error("Error sending OTP:", error);
-    res.status(500).json({ error: "Failed to send OTP" });
+    return res.status(500).json({ error: "Failed to send OTP" });
   }
 });
 
@@ -280,17 +310,33 @@ app.post("/api/auth/verify-otp", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    // 7.1. Set cookie
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: isProduction,
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
+res.cookie("authToken", token, cookieOptions);
+
     // 8. Xoá OTP vì đã dùng xong
     await db.ref(`/OTPs/${verificationId}`).remove();
 
     // 9. Trả kết quả cho frontend
-    res.json({
+    const responseData = {
       success: true,
-      token: token,
       phoneNumber: phoneNumber,
       role: role,
       user: { ...userData, lastLogin: now, role },
-    });
+    };
+    
+    // Dev thì vẫn trả token cho tiện debug, production thì không
+    if (!isProduction) {
+      responseData.token = token;
+    }
+    
+    res.json(responseData);
   } catch (error) {
     console.error("Error verifying OTP:", error);
     res.status(500).json({ error: "Lỗi xác thực OTP" });
@@ -349,14 +395,30 @@ app.post("/api/auth/register", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    // Set cookie chứa token
+const cookieOptions = {
+  httpOnly: true,                 // JS không đọc được
+  sameSite: "lax",                // tránh CSRF cơ bản
+  secure: isProduction,           // chỉ dùng HTTPS ở production
+  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 ngày
+};
+
+res.cookie("authToken", token, cookieOptions);
+
     // Clean up OTP
     await db.ref(`/OTPs/${verificationId}`).remove();
 
-    res.json({
+    const responseData = {
       success: true,
       user: userData,
-      token: token,
-    });
+    };
+    
+    // Dev thì vẫn trả token cho tiện debug, production thì không
+    if (!isProduction) {
+      responseData.token = token;
+    }
+    
+    res.json(responseData);
   } catch (error) {
     console.error("Error registering user:", error);
     res.status(500).json({ error: "Failed to register user" });
