@@ -7,6 +7,8 @@ const fs = require("fs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
+require("dotenv").config();
+// giau secretkey vao .env
 
 // Danh sách tủ logic theo kích thước (demo)
 // Thực tế: mỗi lockerId có thể là 1 ngăn tủ thật.
@@ -73,7 +75,10 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT ||3000;
-const JWT_SECRET = "supersecretkey"; // nhớ đổi khi lên production
+const JWT_SECRET = process.env.JWT_SECRET || "bimatnho";
+ // nhớ đổi khi lên production
+ //process.env.JWT_SECRET: lấy giá trị từ biến môi trường JWT_SECRET.
+//Nếu không có (vd: quên set, hoặc đang dev lười tạo .env), thì dùng tạm "dev-secret" cho khỏi crash.
 
 // =======================
 // Phone Auth Configuration
