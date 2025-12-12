@@ -13,3 +13,37 @@
         }
     ]
 }
+//Đây là file cấu hình debug của VS Code (thư mục .vscode/launch.json).
+
+Đoạn của em:
+
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "chrome",
+            "request": "launch",
+            "name": "Launch Chrome against localhost",
+            "url": "http://localhost:8080",
+            "webRoot": "${workspaceFolder}"
+        }
+    ]
+}
+
+
+Ý nghĩa:
+
+Khi em bấm Run → Start Debugging trong VS Code và chọn cấu hình này,
+
+VS Code sẽ mở Chrome và truy cập vào URL:
+👉 http://localhost:8080
+
+Nó KHÔNG:
+
+KHÔNG chạy server Node
+
+KHÔNG ảnh hưởng gì đến port thật mà backend đang lắng nghe
+
+KHÔNG liên quan đến việc deploy / public web lên internet
+
+Đơn giản chỉ là: “debug config: mở Chrome tới địa chỉ này”.

@@ -1,7 +1,7 @@
 // Authentication Management for Smart Locker System
 class AuthManager {
     constructor() {
-        this.baseURL = 'http://localhost:3000/api';
+        this.baseURL = '/api';
         // Không giữ token nữa, chỉ giữ thông tin hiển thị
         this.phoneNumber = localStorage.getItem('phoneNumber');
         this.role = localStorage.getItem('role') || 'resident';

@@ -396,3 +396,6 @@ addActivityLog('Phím tắt: Ctrl+O (Mở), Ctrl+C (Đóng), Ctrl+H (Giữ)', 's
 
 
 
+
+
+

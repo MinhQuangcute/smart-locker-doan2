@@ -107,4 +107,6 @@ backend/serviceAccountKey.json
 -n/
 
 package-lock.json
+.env
+
 
