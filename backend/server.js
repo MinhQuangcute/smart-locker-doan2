@@ -17,7 +17,7 @@ const cookieParser = require("cookie-parser");
 const LOCKERS_BY_SIZE = {
   small: ["S1", "S2"],      // tủ nhỏ
   medium: ["M1", "M2"],     // tủ vừa
-  large: ["L1"]             // tủ lớn
+  large: ["L1","L2"]             // tủ lớn
 };
 
 
@@ -68,6 +68,11 @@ admin.initializeApp({
 });
 
 const db = admin.database();
+function lockerRefById(lockerId) { //doi node firebase thanh lockerid
+  if (!lockerId) throw new Error("lockerId is required");
+  return db.ref(`/Lockers/${lockerId}`);
+}
+
 
 // =======================
 // 2. Khởi tạo express
@@ -437,9 +442,9 @@ app.post("/api/command", authenticateToken, requireAdmin, async (req, res) => {
   }
 
   try {
-    const lockerRef = db.ref(`/Locker1`);
+    const lockerRef =  lockerRefById(lockerId);
     await lockerRef.update({
-      status: action,
+      command: action,
       last_update: Date.now(),
     });
 
@@ -465,7 +470,7 @@ app.post("/api/command", authenticateToken, requireAdmin, async (req, res) => {
 app.get("/api/locker/:id/status", authenticateToken, async (req, res) => {
   const lockerId = req.params.id;
   try {
-    const lockerSnapshot = await db.ref(`/Locker1`).once("value");
+    const lockerSnapshot = await lockerRefById(lockerId).once("value");
     const lockerData = lockerSnapshot.val();
     res.json(lockerData || { status: "unknown" });
   } catch (err) {
@@ -544,6 +549,14 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
        createdAt: now,
        expiresAt
      });
+
+     // ✅ DÁN Ở ĐÂY: cập nhật node locker tương ứng
+await db.ref(`/Lockers/${lockerId}`).update({
+  status: "booked",
+  last_update: Date.now(),
+});
+     
+    
  
      res.json({
        success: true,
@@ -633,17 +646,18 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
     }
 
     // 3. Mở tủ cho shipper
-    const lockerRef = db.ref(`/Locker1`); // hoặc `/Lockers/${reservation.lockerId}` nếu bạn tách nhiều tủ
-    await lockerRef.update({
-      status: "open",
+   // const lockerRef = db.ref(`/Locker1`); // hoặc `/Lockers/${reservation.lockerId}` nếu bạn tách nhiều tủ
+    await lockerRefById(reservation.lockerId).update({
+      command: "open",
       last_update: Date.now(),
+      status:"loaded",
     });
 
     // 4. Sinh OTP cho cư dân mở tủ lần sau
     const pickupOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
     await db.ref(`/Reservations/${reservationId}`).update({
-      status: "loaded",      // đã bỏ hàng vào tủ
+      status: "loaded",  
       loadedAt: Date.now(),
       pickupOtp: pickupOtp,  // OTP cho cư dân
       otpCode: pickupOtp     // để code cũ dùng otpCode cũng không bị hỏng
@@ -770,9 +784,10 @@ app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) =>
     }
 
     // Mở tủ: cập nhật node Locker1 (hoặc Lockers/lockerId nếu bạn tách)
-    const lockerRef = db.ref(`/Locker1`);
-    await lockerRef.update({
-      status: "open",
+   // const lockerRef = db.ref(`/Locker1`);
+    await lockerRefById(reservation.lockerId).update({
+      command: "open",
+      status:"idle",
       last_update: Date.now(),
     });
 
@@ -780,6 +795,7 @@ app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) =>
     await reservationRef.update({
       status: "opened",
       openedAt: Date.now(),
+    //  expiresAt: Date.now() // optional: cho “hết hạn ngay”
     });
 
     // Ghi log

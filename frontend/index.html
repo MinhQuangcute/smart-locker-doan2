@@ -134,6 +134,7 @@
     .main-btn.primary {
       background: linear-gradient(135deg, var(--wood-accent), var(--wood-accent-dark));
       color: white;
+      font-weight: 600;
     }
 
     .main-btn:hover {
@@ -304,7 +305,7 @@
 
       <!-- Ba nút chính -->
       <div class="main-actions">
-        <button id="btnShowLogin" class="main-btn primary">
+        <button id="btnShowLogin" class="main-btn ">
           <i class="fas fa-right-to-bracket"></i>
           <span>Đăng nhập</span>
         </button>
@@ -419,6 +420,10 @@
 
     function showPanel(name) {
       clearStatus();
+
+       // đổi trạng thái nút (in đậm/nổi bật)
+  btnShowLogin.classList.toggle("primary", name === "login");
+  btnShowRegister.classList.toggle("primary", name === "register");
       if (name === "register") {
         panelRegister.classList.remove("hidden");
         panelLogin.classList.add("hidden");

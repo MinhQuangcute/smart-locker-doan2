@@ -1,3 +1,5 @@
+/*
+
 // client-app.js (phiên bản: Frontend gọi Backend -> Backend ghi Firebase -> ESP32 đọc)
 // Firebase v12 - Database functions are imported in HTML
 // Wait for Firebase to be initialized
