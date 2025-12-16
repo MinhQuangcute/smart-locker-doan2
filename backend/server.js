@@ -1102,15 +1102,25 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
 
     // 5) Sau khi commit thành công -> cập nhật locker
     let usedFallback = false;
+    let nowFallback = null;
 
-    // ... sau khi !tx.committed và latest.status === "booked"
-    await reservationRef.update({ status:"loaded", loadedAt: nowFallback, pickupOtp, otpCode: pickupOtp });
-    usedFallback = true;
+    if (!tx.committed) {
+      if (latest.status === "booked") {
+        usedFallback = true;
+        nowFallback = Date.now();
+        await reservationRef.update({
+          status: "loaded",
+          loadedAt: nowFallback,
+          pickupOtp,
+          otpCode: pickupOtp,
+        });
+      }
+    }
 
-    // ---- Sau đó, trước khi cập nhật locker:
-    const updatedReservation = usedFallback
-      ? (await reservationRef.once("value")).val()
-      : (tx.snapshot.val() || {});
+const updatedReservation = usedFallback
+  ? (await reservationRef.once("value")).val()
+  : (tx.snapshot.val() || {});
+
     const lockerId = updatedReservation.lockerId || chosen.r.lockerId || null;
 
     if (!lockerId) {
