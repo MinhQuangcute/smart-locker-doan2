@@ -1026,34 +1026,22 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
 
     const tx = await reservationRef.transaction((current) => {
       if (!current) {
-        // Đã check tồn tại trước đó, nên nếu tới đây thường là race condition xoá dữ liệu
-        console.warn(
-          "[shipper/use-reservation] Transaction saw empty current value",
-          { reservationId }
-        );
-        return;
+        abortReason = "missing";
+        return; // abort (đúng) nếu server thật sự không có
       }
 
       const nowTx = Date.now();
-
-      if (nowTx > (current.expiresAt || 0)) {
-        abortReason = "expired";
-        return;
-      }
-
-      if (current.status !== "booked") {
-        abortReason = "invalid_status";
-        return;
-      }
+      if (nowTx > (current.expiresAt || 0)) { abortReason = "expired"; return; }
+      if (current.status !== "booked") { abortReason = "invalid_status"; return; }
 
       return {
         ...current,
         status: "loaded",
         loadedAt: nowTx,
         pickupOtp,
-        otpCode: pickupOtp, // giữ tương thích cũ
+        otpCode: pickupOtp,
       };
-    });
+    }, undefined, /* applyLocally */ false);
 
     if (!tx.committed) {
       console.warn(
@@ -1113,7 +1101,16 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
     }
 
     // 5) Sau khi commit thành công -> cập nhật locker
-    const updatedReservation = tx.snapshot.val() || {};
+    let usedFallback = false;
+
+    // ... sau khi !tx.committed và latest.status === "booked"
+    await reservationRef.update({ status:"loaded", loadedAt: nowFallback, pickupOtp, otpCode: pickupOtp });
+    usedFallback = true;
+
+    // ---- Sau đó, trước khi cập nhật locker:
+    const updatedReservation = usedFallback
+      ? (await reservationRef.once("value")).val()
+      : (tx.snapshot.val() || {});
     const lockerId = updatedReservation.lockerId || chosen.r.lockerId || null;
 
     if (!lockerId) {

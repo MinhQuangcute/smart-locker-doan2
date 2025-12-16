@@ -218,6 +218,16 @@
               placeholder="Nhập mã 6 chữ số"
             >
           </div>
+          
+        <div class="ship-body">
+          <div class="setting-item">
+            <label for="lockerId">LockerId:</label>
+            <input
+              type="text"
+              id="lockerId"
+              placeholder="Nhập mã tủ(VD:S1)"
+            >
+          </div>
 
           <button id="shipperBtn" onclick="useReservation()">
             <i class="fas fa-box-open"></i>
@@ -275,8 +285,15 @@
 
     async function useReservation() {
       const codeInput = document.getElementById("bookingCode");
+      const lockerInput = document.getElementById("lockerId");
       const code = codeInput.value.trim();
+      const lockerId = (lockerInput?.value || "").trim().toUpperCase();
 
+
+      if (!lockerId) {
+      showMsg("Vui lòng nhập mã tủ (VD: S1).", "error");
+      return;
+    }
       if (!code) {
         showMsg("Vui lòng nhập mã đặt tủ.", "error");
         return;
@@ -289,14 +306,18 @@
         const res = await fetch(`${API_BASE}/shipper/use-reservation`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bookingCode: code })
+          body: JSON.stringify({ lockerId,bookingCode: code })
         });
 
         const data = await res.json().catch(() => ({}));
 
         if (!res.ok || !data.success) {
-          throw new Error(data.error || "Không sử dụng được mã đặt tủ");
+        // nếu bị khóa 3 phút backend trả 429 + retryAfterSec
+        if (res.status === 429 && data.retryAfterSec) {
+          throw new Error(`Bạn đã nhập sai quá 3 lần. Vui lòng thử lại sau ${data.retryAfterSec}s.`);
         }
+        throw new Error(data.error || "Không sử dụng được mã đặt tủ");
+      }
 
         showMsg(`✅ Đã mở ${data.lockerId}. Vui lòng bỏ hàng vào tủ và đóng lại.`, "success");
       } catch (err) {

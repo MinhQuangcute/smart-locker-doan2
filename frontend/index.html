@@ -443,36 +443,36 @@
     btnShowLogin.addEventListener("click", () => showPanel("login"));
 
     // Helper gọi API gửi OTP (giữ giống logic cũ)
-    async function sendOtp(phoneInput) {
-      const phoneNumber = phoneInput.value.trim();
-      if (!phoneNumber) {
-        setStatus("error", "Vui lòng nhập số điện thoại");
-        return null;
-      }
-      setStatus("info", "Đang gửi OTP...");
-
-      try {
-        const res = await fetch("/api/auth/send-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phoneNumber })
-        });
-        const data = await res.json();
-
-        if (!res.ok || !data.success) {
-          setStatus("error", data.error || "Gửi OTP thất bại");
+      async function sendOtp(phoneInput) {
+        const phoneNumber = phoneInput.value.trim();
+        if (!phoneNumber) {
+          setStatus("error", "Vui lòng nhập số điện thoại");
           return null;
         }
+        setStatus("info", "Đang gửi OTP...");
 
-        console.log("Dev OTP:", data.otpCode);
-        setStatus("success", "Đã gửi OTP! (xem console server nếu test)");
-        return data.verificationId;
-      } catch (err) {
-        console.error(err);
-        setStatus("error", "Lỗi kết nối server khi gửi OTP");
-        return null;
+        try {
+          const res = await fetch("/api/auth/send-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phoneNumber })
+          });
+          const data = await res.json();
+
+          if (!res.ok || !data.success) {
+            setStatus("error", data.error || "Gửi OTP thất bại");
+            return null;
+          }
+
+          console.log("Dev OTP:", data.otpCode);
+          setStatus("success", "Đã gửi OTP! (xem console server nếu test)");
+          return data.verificationId;
+        } catch (err) {
+          console.error(err);
+          setStatus("error", "Lỗi kết nối server khi gửi OTP");
+          return null;
+        }
       }
-    }
 
     // 1. ĐĂNG KÝ – GỬI OTP
     document.getElementById("regSendOtpBtn").addEventListener("click", async () => {
