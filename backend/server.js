@@ -320,7 +320,7 @@ return res.json(responseData);
   }
 });
 
-// Đăng nhập ,dangki bằng OTP (verify + tạo token)
+// Đăng nhập bằng OTP (verify + tạo token)
 app.post("/api/auth/verify-otp", async (req, res) => {
   const { verificationId, otpCode } = req.body;
 
@@ -439,17 +439,42 @@ app.post("/api/auth/register", async (req, res) => {
   }
 
   try {
-    // Verify OTP
-    const otpSnapshot = await db.ref(`/OTPs/${verificationId}`).once("value");
-    const otpData = otpSnapshot.val();
-
-    if (
-      !otpData ||
-      otpData.otpCode !== otpCode ||
-      Date.now() > otpData.expiresAt
-    ) {
-      return res.status(400).json({ error: "Invalid or expired OTP" });
-    }
+    
+      // 1. Lấy OTP từ Firebase
+      const otpSnapshot = await db.ref(`/OTPs/${verificationId}`).once("value");
+      const otpData = otpSnapshot.val();
+      // bị khoá tạm
+  if (otpData.lockedUntil && Date.now() < otpData.lockedUntil) {
+    return res.status(429).json({ error: "Bạn nhập sai quá nhiều lần, vui lòng thử lại sau 3 phút" });
+  }
+  
+      
+  
+      if (!otpData) {
+        return res
+          .status(400)
+          .json({ error: "Verification ID không hợp lệ" });
+      }
+  
+      // 2. Kiểm tra hết hạn
+      if (Date.now() > otpData.expiresAt) {
+        return res.status(400).json({ error: "OTP đã hết hạn" });
+      }
+  
+      // 3. Kiểm tra mã OTP
+      if (otpData.otpCode !== otpCode) {
+        const attempts = (otpData.attempts || 0) + 1;
+      
+        const update = { attempts };
+        if (attempts >= OTP_MAX_ATTEMPTS) {
+          update.lockedUntil = Date.now() + OTP_LOCK_MINUTES * 60 * 1000;
+        }
+      
+        await db.ref(`/OTPs/${verificationId}`).update(update);
+      
+        return res.status(400).json({ error: "Mã OTP không đúng" });
+      }
+   
 
     // Check if user already exists
     const userRef = db.ref(`/Users/${phoneNumber}`);
@@ -691,240 +716,507 @@ app.get("/api/user/reservations", authenticateToken, async (req, res) => {
 // Shipper dùng mã đặt tủ (bookingCode) để mở tủ và đánh dấu đã bỏ hàng
 // Shipper dùng mã đặt tủ (bookingCode) để mở tủ và đánh dấu đã bỏ hàng
 app.post("/api/shipper/use-reservation", async (req, res) => {
-  const raw = req.body.bookingCode;
-  const codeStr = String(raw || "").trim();
+  const raw = req.body && req.body.bookingCode;
+  const codeStr = String(raw ?? "").trim();
   const codeNum = Number(codeStr);
+
+  console.log("[shipper/use-reservation] Incoming bookingCode:", {
+    raw,
+    codeStr,
+    codeNum: Number.isNaN(codeNum) ? null : codeNum,
+  });
 
   if (!codeStr) {
     return res.status(400).json({ error: "Booking code required" });
   }
 
   try {
-    // 1) Tìm reservation theo bookingCode (thử string trước)
-    let snap = await db
-      .ref("/Reservations")
+    const reservationsRef = db.ref("/Reservations");
+
+    // 1) Thử tìm theo string trước
+    let snap = await reservationsRef
       .orderByChild("bookingCode")
       .equalTo(codeStr)
       .once("value");
 
     // 2) Nếu không thấy và codeNum hợp lệ -> thử theo number
     if (!snap.exists() && !Number.isNaN(codeNum)) {
-      snap = await db
-        .ref("/Reservations")
+      console.log(
+        "[shipper/use-reservation] No reservation with string code, try numeric",
+        { codeStr, codeNum }
+      );
+      snap = await reservationsRef
         .orderByChild("bookingCode")
         .equalTo(codeNum)
         .once("value");
     }
 
-    const reservations = snap.val();
-    if (!reservations) {
-      return res.status(400).json({ error: "Không tìm thấy mã đặt tủ này" });
+    const all = snap.val();
+    if (!all) {
+      console.log(
+        "[shipper/use-reservation] No reservation found after both queries",
+        { codeStr, codeNum: Number.isNaN(codeNum) ? null : codeNum }
+      );
+      return res
+        .status(400)
+        .json({ error: "Không tìm thấy mã đặt tủ này" });
     }
 
-    // 3) Nếu trùng bookingCode -> chọn đơn booked + chưa hết hạn + mới nhất
     const now = Date.now();
-    const entries = Object.entries(reservations).map(([id, r]) => ({ id, r }));
+    const entries = Object.entries(all).map(([id, r]) => ({ id, r }));
 
+    // 3) Lọc reservation hợp lệ: status = booked, chưa hết hạn
     const candidates = entries
-      .filter(({ r }) => r && r.status === "booked" && now <= (r.expiresAt || 0))
+      .filter(({ r }) => {
+        if (!r) return false;
+        const expiresAt = Number(r.expiresAt || 0);
+        return r.status === "booked" && now <= expiresAt;
+      })
       .sort((a, b) => (b.r.createdAt || 0) - (a.r.createdAt || 0));
 
     if (!candidates.length) {
+      // Có bản ghi nhưng không cái nào còn hợp lệ:
+      // ưu tiên báo hết hạn nếu tất cả đã hết hạn
       const any = entries[0]?.r;
+      const hasExpired = entries.some(({ r }) => now > (r?.expiresAt || 0));
+      if (hasExpired) {
+        console.log(
+          "[shipper/use-reservation] Booking code exists but expired",
+          { codeStr }
+        );
+        return res
+          .status(400)
+          .json({ error: "Đơn đặt tủ đã hết hạn" });
+      }
+
+      const currentStatus = any?.status || "unknown";
+      console.log(
+        "[shipper/use-reservation] Booking code exists but invalid status",
+        { codeStr, status: currentStatus }
+      );
       return res.status(400).json({
-        error: `Mã tồn tại nhưng không hợp lệ (trạng thái: ${any?.status || "unknown"}).`,
+        error: `Mã tồn tại nhưng không hợp lệ (trạng thái: ${currentStatus}).`,
       });
     }
 
-    const reservationId = candidates[0].id;
+    const chosen = candidates[0];
+    const reservationId = chosen.id;
 
-    // 4) Transaction: booked -> loaded (chỉ dùng 1 lần)
+    console.log("[shipper/use-reservation] Chosen reservation", {
+      reservationId,
+      createdAt: chosen.r.createdAt,
+      lockerId: chosen.r.lockerId,
+    });
+
+    // 4) Đọc trước để chắc chắn reservation tồn tại ở path này
     const reservationRef = db.ref(`/Reservations/${reservationId}`);
+    const preSnap = await reservationRef.once("value");
+    const preData = preSnap.val();
+
+    if (!preData) {
+      console.warn(
+        "[shipper/use-reservation] Reservation disappeared before transaction",
+        { reservationId }
+      );
+      return res
+        .status(400)
+        .json({ error: "Không tìm thấy mã đặt tủ này" });
+    }
+
+    // 5) Transaction: cập nhật duy nhất 1 lần từ booked -> loaded
+    let abortReason = null;
     const pickupOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    const tx = await reservationRef.transaction((cur) => {
-      if (!cur) return;
-      if (now > (cur.expiresAt || 0)) return;
-      if (cur.status !== "booked") return;
+    const tx = await reservationRef.transaction((current) => {
+      if (!current) {
+        // Đã check tồn tại trước đó, nên nếu tới đây thường là race condition xoá dữ liệu
+        console.warn(
+          "[shipper/use-reservation] Transaction saw empty current value",
+          { reservationId }
+        );
+        return;
+      }
+
+      const nowTx = Date.now();
+
+      if (nowTx > (current.expiresAt || 0)) {
+        abortReason = "expired";
+        return;
+      }
+
+      if (current.status !== "booked") {
+        abortReason = "invalid_status";
+        return;
+      }
 
       return {
-        ...cur,
+        ...current,
         status: "loaded",
-        loadedAt: now,
+        loadedAt: nowTx,
         pickupOtp,
-        otpCode: pickupOtp, // giữ tương thích code cũ
+        otpCode: pickupOtp, // giữ tương thích cũ
       };
     });
 
     if (!tx.committed) {
-      const latest = (await reservationRef.once("value")).val();
+      console.warn(
+        "[shipper/use-reservation] Transaction NOT committed",
+        { reservationId, abortReason }
+      );
 
-      if (!latest) return res.status(400).json({ error: "Không tìm thấy mã đặt tủ này" });
-      if (Date.now() > (latest.expiresAt || 0)) {
-        return res.status(400).json({ error: "Đơn đặt tủ đã hết hạn" });
+      if (abortReason === "expired") {
+        return res
+          .status(400)
+          .json({ error: "Đơn đặt tủ đã hết hạn" });
       }
-      return res.status(400).json({
-        error: `Trạng thái hiện tại: ${latest.status}, không thể dùng mã này.`,
+
+      if (abortReason === "invalid_status") {
+        const latest = tx.snapshot && tx.snapshot.val();
+        const latestStatus = latest?.status || "unknown";
+        return res.status(400).json({
+          error: `Trạng thái hiện tại: ${latestStatus}, không thể dùng mã này.`,
+        });
+      }
+
+      // Fallback: tra lại tình trạng hiện tại
+      const latestSnap = await reservationRef.once("value");
+      const latest = latestSnap.val();
+      if (!latest) {
+        return res
+          .status(400)
+          .json({ error: "Không tìm thấy mã đặt tủ này" });
+      }
+      if (Date.now() > (latest.expiresAt || 0)) {
+        return res
+          .status(400)
+          .json({ error: "Đơn đặt tủ đã hết hạn" });
+      }
+
+      // Nếu vẫn còn booked và chưa hết hạn mà transaction không commit,
+      // fallback sang update trực tiếp để không chặn shipper.
+      if (latest.status === "booked") {
+        console.warn(
+          "[shipper/use-reservation] Tx not committed but latest still booked, fallback to direct update",
+          { reservationId }
+        );
+        const nowFallback = Date.now();
+        await reservationRef.update({
+          status: "loaded",
+          loadedAt: nowFallback,
+          pickupOtp,
+          otpCode: pickupOtp,
+        });
+      } else {
+        return res.status(400).json({
+          error: `Trạng thái hiện tại: ${
+            latest.status || "unknown"
+          }, không thể dùng mã này.`,
+        });
+      }
+    }
+
+    // 5) Sau khi commit thành công -> cập nhật locker
+    const updatedReservation = tx.snapshot.val() || {};
+    const lockerId = updatedReservation.lockerId || chosen.r.lockerId || null;
+
+    if (!lockerId) {
+      console.warn(
+        "[shipper/use-reservation] Missing lockerId for reservation",
+        { reservationId }
+      );
+
+      // Không crash, vẫn trả success vì reservation đã được cập nhật
+      return res.json({
+        success: true,
+        lockerId: null,
+        message:
+          "Đã ghi nhận đơn hàng (loaded) nhưng không tìm thấy locker tương ứng. Vui lòng liên hệ quản trị.",
       });
     }
 
-    // 5) Commit xong mới mở tủ
-    const updatedReservation = tx.snapshot.val();
-    if (!updatedReservation?.lockerId) {
-      return res.status(500).json({ error: "Reservation thiếu lockerId" });
+    try {
+      await lockerRefById(lockerId).update({
+        command: "open",
+        status: "loaded",
+        last_update: Date.now(),
+      });
+    } catch (lockerErr) {
+      console.error(
+        "[shipper/use-reservation] Failed to update locker",
+        { lockerId, reservationId, error: lockerErr }
+      );
+      // Không throw để tránh crash; reservation đã ở trạng thái loaded
     }
 
-    await lockerRefById(updatedReservation.lockerId).update({
-      command: "open",
-      last_update: Date.now(),
-      status: "loaded",
-    });
-
-    console.log(`🎯 OTP cho người nhận (${updatedReservation.receiverPhone}): ${pickupOtp}`);
+    if (pickupOtp) {
+      console.log(
+        `🎯 OTP cho người nhận (${updatedReservation.receiverPhone}): ${pickupOtp}`
+      );
+    }
 
     return res.json({
       success: true,
-      lockerId: updatedReservation.lockerId,
+      lockerId,
       message: "Đã mở tủ cho shipper và tạo OTP cho người nhận.",
     });
   } catch (err) {
     console.error("Error using reservation by shipper:", err);
-    return res.status(500).json({ error: "Lỗi xử lý mã đặt tủ cho shipper" });
+    return res
+      .status(500)
+      .json({ error: "Lỗi xử lý mã đặt tủ cho shipper" });
   }
 });
 
+// =======================
+// Receiver: kiểm tra đơn hàng đang chờ (status = loaded)
+// =======================
+app.post("/api/receiver/check-reservation", authenticateToken, async (req, res) => {
+  const phoneNumber = req.user && req.user.phoneNumber;
+
+  if (!phoneNumber) {
+    return res.status(401).json({ success: false, error: "Không xác định được người dùng" });
+  }
+
+  try {
+    const snap = await db
+      .ref("/Reservations")
+      .orderByChild("receiverPhone")
+      .equalTo(phoneNumber)
+      .once("value");
+
+    const data = snap.val() || {};
+    const now = Date.now();
+
+    const entries = Object.entries(data).map(([id, r]) => ({ id, r }));
+
+    // Chỉ quan tâm các đơn đã được shipper bỏ hàng (loaded) và chưa hết hạn
+    const loadedReservations = entries
+      .filter(({ r }) => {
+        if (!r) return false;
+        const expiresAt = Number(r.expiresAt || 0);
+        return r.status === "loaded" && now <= expiresAt;
+      })
+      .sort((a, b) => {
+        const ta = b.r.loadedAt || b.r.createdAt || 0;
+        const tb = a.r.loadedAt || a.r.createdAt || 0;
+        return ta - tb; // sort desc theo (loadedAt || createdAt)
+      });
+
+    if (!loadedReservations.length) {
+      return res.json({
+        success: true,
+        hasReservation: false,
+      });
+    }
+
+    const chosen = loadedReservations[0];
+    const r = chosen.r;
+
+    return res.json({
+      success: true,
+      hasReservation: true,
+      reservation: {
+        id: chosen.id,
+        lockerId: r.lockerId || "Locker1",
+        status: r.status || "loaded",
+        expiresAt: r.expiresAt || null,
+        createdAt: r.createdAt || null,
+        loadedAt: r.loadedAt || null,
+      },
+    });
+  } catch (err) {
+    console.error("Error checking receiver reservation:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Lỗi kiểm tra đơn hàng đang chờ" });
+  }
+});
 
 // =======================
 // Receiver: nhập OTP để mở tủ
 // =======================
 app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) => {
-  const { reservationId, otpCode } = req.body;
-  const phoneNumber = req.user.phoneNumber;
+  const reservationId = String(req.body.reservationId || "").trim();
+  const otpCode = String(req.body.otpCode || "").trim(); // ép về string
+  const phoneNumber = String(req.user.phoneNumber || "").trim();
 
   if (!reservationId || !otpCode) {
     return res.status(400).json({ error: "Reservation ID và OTP là bắt buộc" });
   }
 
-  try {
-    const reservationRef = db.ref(`/Reservations/${reservationId}`);
-    const now = Date.now();
+  const reservationRef = db.ref("/Reservations").child(reservationId);
 
-    // ✅ Transaction: chặn bấm 2 lần + limit sai OTP
-    const tx = await reservationRef.transaction((cur) => {
+  function normalizeOtp(x) {
+    return String(x ?? "").trim();
+  }
+
+  function normalizePhoneVN(p) {
+    p = String(p ?? "").replace(/\s+/g, "");
+    if (p.startsWith("+84")) return "0" + p.slice(3);
+    if (p.startsWith("84")) return "0" + p.slice(2);
+    return p;
+  }
+
+  async function openLockerAndLog(lockerId, action) {
+    const ts = Date.now();
+    await lockerRefById(lockerId).update({
+      command: "open",
+      status: "idle",
+      last_update: ts,
+    });
+
+    const logRef = db.ref("/Logs").push();
+    await logRef.set({
+      phone: phoneNumber,
+      locker: lockerId,
+      action,
+      timestamp: ts,
+      result: "success",
+      reservationId,
+    });
+  }
+
+  async function attemptTransactionOpen() {
+    return reservationRef.transaction((cur) => {
       if (!cur) return;
 
-      // Đảm bảo đúng người nhận
-      if (cur.receiverPhone !== phoneNumber) return;
+      const now = Date.now();
 
-      // Kiểm tra trạng thái
+      // Chuẩn hoá SĐT để tránh +84/84/0...
+      const curPhone = normalizePhoneVN(cur.receiverPhone);
+      const reqPhone = normalizePhoneVN(phoneNumber);
+      if (curPhone !== reqPhone) return;
+
+      // Idempotent: đã opened rồi thì giữ nguyên (coi như thành công)
+      if (cur.status === "opened") {
+        return cur;
+      }
+
       if (cur.status !== "loaded") return;
+      if (now > Number(cur.expiresAt || 0)) return;
 
-      // Kiểm tra hết hạn
-      if (now > (cur.expiresAt || 0)) return;
+      if (cur.otpLockedUntil && now < Number(cur.otpLockedUntil || 0)) return;
 
-      // Nếu đang bị khoá do nhập sai nhiều lần
-      if (cur.otpLockedUntil && now < cur.otpLockedUntil) return;
-
-      const storedOtp = cur.pickupOtp || cur.otpCode;
+      const storedOtp = normalizeOtp(cur.pickupOtp || cur.otpCode);
+      const inputOtp = normalizeOtp(otpCode);
 
       // Sai OTP -> tăng attempts và có thể khoá
-      if (!storedOtp || storedOtp !== otpCode) {
-        const nextAttempts = (cur.otpAttempts || 0) + 1;
-
-        const patched = {
-          ...cur,
-          otpAttempts: nextAttempts,
-        };
+      if (!storedOtp || storedOtp !== inputOtp) {
+        const nextAttempts = Number(cur.otpAttempts || 0) + 1;
+        const patched = { ...cur, otpAttempts: nextAttempts };
 
         if (nextAttempts >= PICKUP_OTP_MAX_ATTEMPTS) {
           patched.otpLockedUntil = now + PICKUP_OTP_LOCK_MINUTES * 60 * 1000;
         }
-
-        return patched; // ✅ commit để lưu attempts
+        return patched;
       }
 
-      // Đúng OTP -> mở đơn (reset attempts)
+      // Đúng OTP -> opened
       return {
         ...cur,
         status: "opened",
         openedAt: now,
         otpAttempts: 0,
         otpLockedUntil: 0,
-        // expiresAt: now, // optional nếu bạn muốn “đóng đơn ngay”
       };
     });
+  }
 
-    // Không commit -> trả đúng lỗi chi tiết như cũ (và thêm case lock)
+  try {
+    // Lần 1
+    let tx = await attemptTransactionOpen();
+
+    // Nếu không commit, đọc latest + thử lại lần 2 (hay cứu được do retry/network)
     if (!tx.committed) {
-      const latestSnap = await reservationRef.once("value");
-      const reservation = latestSnap.val();
+      const latest = (await reservationRef.once("value")).val();
+      if (!latest) return res.status(400).json({ error: "Không tìm thấy đơn đặt tủ" });
 
-      if (!reservation) {
-        return res.status(400).json({ error: "Không tìm thấy đơn đặt tủ" });
+      const now = Date.now();
+
+      const curPhone = normalizePhoneVN(latest.receiverPhone);
+      const reqPhone = normalizePhoneVN(phoneNumber);
+      if (curPhone !== reqPhone) return res.status(403).json({ error: "Bạn không có quyền mở đơn đặt tủ này" });
+
+      // Nếu đã opened sẵn → coi như thành công
+      if (latest.status === "opened") {
+        if (latest.lockerId) {
+          await openLockerAndLog(latest.lockerId, "open_by_receiver_already_opened");
+        }
+        return res.json({ success: true, lockerOpened: true, message: "Đơn đã mở trước đó." });
       }
 
-      if (reservation.receiverPhone !== phoneNumber) {
-        return res.status(403).json({ error: "Bạn không có quyền mở đơn đặt tủ này" });
+      // Nếu không đúng điều kiện thì trả lỗi rõ ràng
+      if (latest.status !== "loaded") {
+        return res.status(400).json({ error: `Đơn ở trạng thái '${latest.status}', không thể mở bằng OTP` });
       }
-
-      if (reservation.status !== "loaded") {
-        return res
-          .status(400)
-          .json({ error: `Đơn ở trạng thái '${reservation.status}', không thể mở bằng OTP` });
-      }
-
-      if (Date.now() > (reservation.expiresAt || 0)) {
+      if (now > Number(latest.expiresAt || 0)) {
         return res.status(400).json({ error: "Đơn đặt tủ đã hết hạn" });
       }
-
-      if (reservation.otpLockedUntil && Date.now() < reservation.otpLockedUntil) {
+      if (latest.otpLockedUntil && now < Number(latest.otpLockedUntil || 0)) {
         return res.status(429).json({ error: "Bạn nhập sai quá 5 lần, vui lòng thử lại sau 5 phút" });
       }
 
-      const storedOtp = reservation.pickupOtp || reservation.otpCode;
-      if (!storedOtp || storedOtp !== otpCode) {
+      const storedOtp = normalizeOtp(latest.pickupOtp || latest.otpCode);
+      const inputOtp = normalizeOtp(otpCode);
+      if (!storedOtp || storedOtp !== inputOtp) {
         return res.status(400).json({ error: "Mã OTP không đúng" });
       }
 
-      return res.status(400).json({ error: "Không thể xử lý yêu cầu mở tủ" });
+      // Thử transaction lần 2
+      tx = await attemptTransactionOpen();
+
+      // Nếu vẫn không commit nhưng mọi điều kiện vẫn đúng → fallback update
+      if (!tx.committed) {
+        const nowFallback = Date.now();
+
+        // Fallback update trực tiếp (chỉ làm khi chắc chắn status vẫn loaded)
+        const latest2 = (await reservationRef.once("value")).val();
+        if (!latest2) return res.status(400).json({ error: "Không tìm thấy đơn đặt tủ" });
+
+        if (latest2.status !== "loaded") {
+          return res.status(400).json({ error: `Trạng thái hiện tại: ${latest2.status}, không thể dùng OTP.` });
+        }
+
+        await reservationRef.update({
+          status: "opened",
+          openedAt: nowFallback,
+          otpAttempts: 0,
+          otpLockedUntil: 0,
+        });
+
+        if (latest2.lockerId) {
+          await openLockerAndLog(latest2.lockerId, "open_by_receiver_fallback");
+        }
+
+        return res.json({
+          success: true,
+          lockerOpened: true,
+          message: "Mở tủ thành công (fallback).",
+        });
+      }
     }
 
-    // Commit rồi: có thể là "opened" hoặc chỉ là commit attempts do sai OTP
-    const updatedReservation = tx.snapshot.val();
+    // Commit rồi: có thể opened hoặc chỉ commit attempts do sai OTP
+    const updated = tx.snapshot.val();
 
-    // Nếu bị khoá hoặc OTP sai (commit attempts) -> trả message tương ứng
-    if (updatedReservation.status !== "opened") {
-      if (updatedReservation.otpLockedUntil && Date.now() < updatedReservation.otpLockedUntil) {
+    if (updated.status !== "opened") {
+      if (updated.otpLockedUntil && Date.now() < Number(updated.otpLockedUntil || 0)) {
         return res.status(429).json({ error: "Bạn nhập sai quá 5 lần, vui lòng thử lại sau 5 phút" });
       }
       return res.status(400).json({ error: "Mã OTP không đúng" });
     }
 
-    // ✅ opened -> mở tủ + nhả tủ về idle
-    await lockerRefById(updatedReservation.lockerId).update({
-      command: "open",
-      status: "idle",
-      last_update: Date.now(),
-    });
-
-    // Ghi log
-    const logRef = db.ref("/Logs").push();
-    await logRef.set({
-      phone: phoneNumber,
-      locker: updatedReservation.lockerId,
-      action: "open_by_receiver",
-      timestamp: Date.now(),
-      result: "success",
-      reservationId: reservationId
-    });
+    if (updated.lockerId) {
+      await openLockerAndLog(updated.lockerId, "open_by_receiver");
+    }
 
     return res.json({
       success: true,
       lockerOpened: true,
-      message: "Mở tủ thành công, bạn có thể lấy hàng."
+      message: "Mở tủ thành công, bạn có thể lấy hàng.",
     });
   } catch (error) {
-    console.error("Error verifying OTP & opening locker:", error);
+    console.error("[receiver/verify-and-open] Error:", error);
     return res.status(500).json({ error: "Lỗi khi xác thực OTP và mở tủ" });
   }
 });
