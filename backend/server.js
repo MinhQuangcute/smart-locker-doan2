@@ -1021,13 +1021,14 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
     }
 
     // 5) Transaction: cập nhật duy nhất 1 lần từ booked -> loaded
+    // 5) Transaction: cập nhật duy nhất 1 lần từ booked -> loaded
     let abortReason = null;
     const pickupOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
     const tx = await reservationRef.transaction((current) => {
       if (!current) {
         abortReason = "missing";
-        return; // abort (đúng) nếu server thật sự không có
+        return; // abort
       }
 
       const nowTx = Date.now();
@@ -1043,47 +1044,40 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
       };
     }, undefined, /* applyLocally */ false);
 
+    // Luôn có biến latest ở scope ngoài để không bao giờ "is not defined"
+    let latest = null;
+
     if (!tx.committed) {
-      console.warn(
-        "[shipper/use-reservation] Transaction NOT committed",
-        { reservationId, abortReason }
-      );
+      console.warn("[shipper/use-reservation] Transaction NOT committed", { reservationId, abortReason });
 
-      if (abortReason === "expired") {
-        return res
-          .status(400)
-          .json({ error: "Đơn đặt tủ đã hết hạn" });
+      if (abortReason === "missing") {
+        return res.status(400).json({ error: "Không tìm thấy mã đặt tủ này" });
       }
-
+      if (abortReason === "expired") {
+        return res.status(400).json({ error: "Đơn đặt tủ đã hết hạn" });
+      }
       if (abortReason === "invalid_status") {
-        const latest = tx.snapshot && tx.snapshot.val();
-        const latestStatus = latest?.status || "unknown";
+        const snapTx = tx.snapshot && tx.snapshot.val();
+        const latestStatus = snapTx?.status || "unknown";
         return res.status(400).json({
           error: `Trạng thái hiện tại: ${latestStatus}, không thể dùng mã này.`,
         });
       }
 
-      // Fallback: tra lại tình trạng hiện tại
+      // Fallback: đọc trạng thái hiện tại
       const latestSnap = await reservationRef.once("value");
-      const latest = latestSnap.val();
+      latest = latestSnap.val();
+
       if (!latest) {
-        return res
-          .status(400)
-          .json({ error: "Không tìm thấy mã đặt tủ này" });
+        return res.status(400).json({ error: "Không tìm thấy mã đặt tủ này" });
       }
       if (Date.now() > (latest.expiresAt || 0)) {
-        return res
-          .status(400)
-          .json({ error: "Đơn đặt tủ đã hết hạn" });
+        return res.status(400).json({ error: "Đơn đặt tủ đã hết hạn" });
       }
 
-      // Nếu vẫn còn booked và chưa hết hạn mà transaction không commit,
-      // fallback sang update trực tiếp để không chặn shipper.
+      // Nếu vẫn booked -> update trực tiếp 1 lần (fallback)
       if (latest.status === "booked") {
-        console.warn(
-          "[shipper/use-reservation] Tx not committed but latest still booked, fallback to direct update",
-          { reservationId }
-        );
+        console.warn("[shipper/use-reservation] Fallback to direct update", { reservationId });
         const nowFallback = Date.now();
         await reservationRef.update({
           status: "loaded",
@@ -1091,14 +1085,20 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
           pickupOtp,
           otpCode: pickupOtp,
         });
+
+        // refresh lại để lấy dữ liệu mới nhất sau update
+        latest = (await reservationRef.once("value")).val();
       } else {
         return res.status(400).json({
-          error: `Trạng thái hiện tại: ${
-            latest.status || "unknown"
-          }, không thể dùng mã này.`,
+          error: `Trạng thái hiện tại: ${latest.status || "unknown"}, không thể dùng mã này.`,
         });
       }
     }
+
+    // Sau cùng: lấy bản ghi đã update theo nhánh phù hợp
+    const updatedReservation = tx.committed
+      ? (tx.snapshot.val() || {})
+      : (latest || {});
 
     // 5) Sau khi commit thành công -> cập nhật locker
     let usedFallback = false;
@@ -1116,10 +1116,6 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
         });
       }
     }
-
-const updatedReservation = usedFallback
-  ? (await reservationRef.once("value")).val()
-  : (tx.snapshot.val() || {});
 
     const lockerId = updatedReservation.lockerId || chosen.r.lockerId || null;
 
