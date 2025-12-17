@@ -22,9 +22,7 @@
       --success: #16a34a;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -71,10 +69,7 @@
       pointer-events: none;
     }
 
-    .ship-inner {
-      position: relative;
-      z-index: 1;
-    }
+    .ship-inner { position: relative; z-index: 1; }
 
     .ship-header {
       display: flex;
@@ -166,6 +161,29 @@
       cursor: wait;
     }
 
+    /* Nút xác nhận (màu cam) */
+    #shipperConfirmBtn {
+      margin-top: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #f97316, #b45309);
+      color: #fff;
+      box-shadow: 0 4px 10px rgba(180, 83, 9, 0.5);
+    }
+
+    #shipperConfirmBtn:disabled {
+      opacity: 0.75;
+      box-shadow: none;
+      cursor: wait;
+    }
+
     #shipperMsg {
       margin-top: 10px;
       font-size: 12px;
@@ -179,20 +197,9 @@
       font-size: 11px;
       opacity: 0.75;
     }
-
-    .badge-locker {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: #fffbeb;
-      border: 1px solid rgba(180, 119, 41, 0.6);
-      font-size: 11px;
-      margin-top: 4px;
-    }
   </style>
 </head>
+
 <body>
   <div class="ship-shell">
     <div class="ship-card">
@@ -204,7 +211,7 @@
           <div class="ship-title">
             <h1>Giao diện Shipper</h1>
             <p>
-              Đến tủ, nhập <strong>mã đặt tủ</strong> do cư dân cung cấp để mở tủ và bỏ hàng.
+              Đến tủ, nhập <strong>mã đặt tủ</strong> + <strong>mã tủ</strong> để mở tủ, bỏ hàng, sau đó xác nhận để hệ thống đóng tủ và tạo OTP.
             </p>
           </div>
         </div>
@@ -212,35 +219,34 @@
         <div class="ship-body">
           <div class="setting-item">
             <label for="bookingCode">Mã đặt tủ:</label>
-            <input
-              type="text"
-              id="bookingCode"
-              placeholder="Nhập mã 6 chữ số"
-            >
-          </div>
-          
-        <div class="ship-body">
-          <div class="setting-item">
-            <label for="lockerId">LockerId:</label>
-            <input
-              type="text"
-              id="lockerId"
-              placeholder="Nhập mã tủ(VD:S1)"
-            >
+            <input type="text" id="bookingCode" placeholder="Nhập mã 6 chữ số">
           </div>
 
+          <div class="setting-item">
+            <label for="lockerId">LockerId:</label>
+            <input type="text" id="lockerId" placeholder="Nhập mã tủ (VD: S1, M2, L2)">
+          </div>
+
+          <!-- Nút 1: Mở tủ -->
           <button id="shipperBtn" onclick="useReservation()">
             <i class="fas fa-box-open"></i>
-            Mở tủ & xác nhận đã bỏ hàng
+            Mở tủ
+          </button>
+
+          <!-- Nút 2: Đóng tủ & xác nhận đã bỏ hàng -->
+          <button id="shipperConfirmBtn" onclick="confirmLoaded()">
+            <i class="fas fa-door-closed"></i>
+            Đóng tủ & xác nhận đã bỏ hàng
           </button>
 
           <div id="shipperMsg"></div>
 
           <div class="ship-note">
             <i class="fas fa-info-circle"></i>
-            Tủ sẽ mở trong thời gian ngắn để bạn bỏ hàng. Đảm bảo đóng tủ sau khi hoàn thành.
+            Bước 1 mở tủ để bỏ hàng. Bước 2 xác nhận đã bỏ hàng (hệ thống sẽ kiểm tra cảm biến và gửi lệnh đóng tủ).
           </div>
         </div>
+
       </div>
     </div>
   </div>
@@ -248,15 +254,22 @@
   <script>
     const API_BASE = "/api";
 
-    function setLoading(loading) {
-      const btn = document.getElementById("shipperBtn");
-      if (!btn) return;
-      if (loading) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang xử lý...';
-      } else {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-box-open"></i> Mở tủ & xác nhận đã bỏ hàng';
+    function setLoading(loading, which = "open") {
+      const openBtn = document.getElementById("shipperBtn");
+      const confirmBtn = document.getElementById("shipperConfirmBtn");
+
+      if (openBtn) {
+        openBtn.disabled = loading;
+        openBtn.innerHTML = (loading && which === "open")
+          ? '<i class="fas fa-spinner fa-spin"></i> Đang mở...'
+          : '<i class="fas fa-box-open"></i> Mở tủ';
+      }
+
+      if (confirmBtn) {
+        confirmBtn.disabled = loading;
+        confirmBtn.innerHTML = (loading && which === "confirm")
+          ? '<i class="fas fa-spinner fa-spin"></i> Đang xác nhận...'
+          : '<i class="fas fa-door-closed"></i> Đóng tủ & xác nhận đã bỏ hàng';
       }
     }
 
@@ -283,43 +296,92 @@
       }
     }
 
-    async function useReservation() {
+    function readInputs() {
       const codeInput = document.getElementById("bookingCode");
       const lockerInput = document.getElementById("lockerId");
-      const code = codeInput.value.trim();
+      const code = (codeInput?.value || "").trim();
       const lockerId = (lockerInput?.value || "").trim().toUpperCase();
+      return { code, lockerId };
+    }
 
+    // Bước 1: Mở tủ (chỉ mở)
+    async function useReservation() {
+      const { code, lockerId } = readInputs();
 
       if (!lockerId) {
-      showMsg("Vui lòng nhập mã tủ (VD: S1).", "error");
-      return;
-    }
+        showMsg("Vui lòng nhập mã tủ (VD: S1).", "error");
+        return;
+      }
       if (!code) {
         showMsg("Vui lòng nhập mã đặt tủ.", "error");
         return;
       }
 
-      setLoading(true);
+      setLoading(true, "open");
       showMsg("");
 
       try {
         const res = await fetch(`${API_BASE}/shipper/use-reservation`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lockerId,bookingCode: code })
+          body: JSON.stringify({ lockerId, bookingCode: code })
         });
 
         const data = await res.json().catch(() => ({}));
 
         if (!res.ok || !data.success) {
-        // nếu bị khóa 3 phút backend trả 429 + retryAfterSec
-        if (res.status === 429 && data.retryAfterSec) {
-          throw new Error(`Bạn đã nhập sai quá 3 lần. Vui lòng thử lại sau ${data.retryAfterSec}s.`);
+          if (res.status === 429 && data.retryAfterSec) {
+            throw new Error(`Bạn đã nhập sai quá 3 lần. Vui lòng thử lại sau ${data.retryAfterSec}s.`);
+          }
+          throw new Error(data.error || "Không mở được tủ");
         }
-        throw new Error(data.error || "Không sử dụng được mã đặt tủ");
+
+        showMsg(`✅ Đã mở tủ ${data.lockerId || lockerId}. Hãy bỏ hàng vào tủ, sau đó bấm “Đóng tủ & xác nhận đã bỏ hàng”.`, "success");
+      } catch (err) {
+        console.error(err);
+        showMsg(err.message || "Có lỗi xảy ra, thử lại sau.", "error");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // Bước 2: Xác nhận đã bỏ hàng + backend đóng tủ + tạo OTP
+    async function confirmLoaded() {
+      const { code, lockerId } = readInputs();
+
+      if (!lockerId) {
+        showMsg("Vui lòng nhập mã tủ (VD: S1).", "error");
+        return;
+      }
+      if (!code) {
+        showMsg("Vui lòng nhập mã đặt tủ.", "error");
+        return;
       }
 
-        showMsg(`✅ Đã mở ${data.lockerId}. Vui lòng bỏ hàng vào tủ và đóng lại.`, "success");
+      setLoading(true, "confirm");
+      showMsg("");
+
+      try {
+        const res = await fetch(`${API_BASE}/shipper/confirm-loaded`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lockerId, bookingCode: code })
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || data.success === false) {
+          // 409: cảm biến/cửa chưa đủ điều kiện
+          if (res.status === 409) {
+            throw new Error(data.error || "Chưa đủ điều kiện để xác nhận (cảm biến/cửa).");
+          }
+          if (res.status === 429 && data.retryAfterSec) {
+            throw new Error(`Bạn đã nhập sai quá 3 lần. Vui lòng thử lại sau ${data.retryAfterSec}s.`);
+          }
+          throw new Error(data.error || "Không xác nhận được đã bỏ hàng");
+        }
+
+        showMsg(`✅ Đã xác nhận bỏ hàng, hệ thống đã tạo OTP và gửi lệnh đóng tủ ${data.lockerId || lockerId}.`, "success");
       } catch (err) {
         console.error(err);
         showMsg(err.message || "Có lỗi xảy ra, thử lại sau.", "error");

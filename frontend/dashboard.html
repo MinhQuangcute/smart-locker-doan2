@@ -513,6 +513,10 @@
                                 <button id="btnPickupOpen" class="btn-primary" style="margin-top:8px;" onclick="verifyPickupOtp()">
                                     <i class="fas fa-door-open"></i> Mở tủ lấy hàng
                                 </button>
+                                <button id="btnPickupClose" class="btn-secondary" style="margin-top:8px;" onclick="closeLockerUser()">
+                                    <i class="fas fa-door-closed"></i> Đóng tủ
+                                  </button>
+                                  
                             </div>
                         </div>
 
@@ -888,6 +892,56 @@
                 }
             }
         }
+
+        async function closeLockerUser() {
+  const btn = document.getElementById("btnPickupClose");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang đóng tủ...';
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/user/close-locker`, {
+      method: "POST",
+      headers: {
+        ...authManager.getAuthHeaders(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({}) // không cần gửi gì, backend tự tìm đơn opened theo phoneNumber
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || "Không đóng được tủ.");
+    }
+
+    alert(`Đã gửi lệnh đóng tủ ${data.lockerId || ""}.`);
+    // refresh UI
+    await loadReservations();
+
+    // reset khối nhận hàng
+    currentPickupReservationId = null;
+    const detailEl = document.getElementById("pickupDetail");
+    const otpBox = document.getElementById("pickupOtpBox");
+    const statusEl = document.getElementById("pickupStatus");
+    if (detailEl) detailEl.style.display = "none";
+    if (otpBox) otpBox.style.display = "none";
+    if (statusEl) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#166534";
+      statusEl.textContent = "Đã đóng tủ. Bạn có thể kiểm tra lại đơn hàng đang chờ.";
+    }
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Có lỗi xảy ra khi đóng tủ.");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-door-closed"></i> Đóng tủ';
+    }
+  }
+}
+
 
         document.addEventListener("DOMContentLoaded", () => {
             // Mặc định load lịch sử một lần
