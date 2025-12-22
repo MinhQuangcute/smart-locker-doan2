@@ -163,6 +163,24 @@
             filter: brightness(1.05);
             transform: translateY(-1px);
         }
+        .btn-danger {
+  margin-top: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(185, 28, 28, 0.35);
+}
+.btn-danger:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.btn-danger:disabled { opacity: 0.7; cursor: wait; box-shadow: none; }
+
+
 
         /* Status strip */
 
@@ -542,6 +560,7 @@
                                     <th>Mã đặt tủ</th>
                                     <th>Trạng thái</th>
                                     <th>Hết hạn</th>
+                                    <th>Thao tác</th>
                                 </tr>
                             </thead>
                             <tbody id="historyTableBody"></tbody>
@@ -758,14 +777,23 @@
                     const statusLabel = r.status || "unknown";
                     const lockerSizeLabel = sizeLabelMap[r.lockerSize] || (r.lockerSize || "-");
 
-                    tr.innerHTML = `
-                        <td>${createdAt}</td>
-                        <td>${r.lockerId || "-"}</td>
-                        <td>${lockerSizeLabel}</td>
-                        <td>${r.bookingCode || "-"}</td>
-                        <td>${statusLabel}</td>
-                        <td>${expiresAt}</td>
-                    `;
+                    const canCancel = String(r.status || "").trim() === "booked";
+const actionHtml = canCancel
+  ? `<button class="btn-danger" onclick="cancelReservation('${r.id}')">
+       <i class="fas fa-ban"></i> Hủy
+     </button>`
+  : `<span style="color:#9ca3af;">-</span>`;
+
+tr.innerHTML = `
+  <td>${createdAt}</td>
+  <td>${r.lockerId || "-"}</td>
+  <td>${lockerSizeLabel}</td>
+  <td>${r.bookingCode || "-"}</td>
+  <td>${statusLabel}</td>
+  <td>${expiresAt}</td>
+  <td>${actionHtml}</td>
+`;
+
                     tbody.appendChild(tr);
                 });
             } catch (err) {
@@ -840,6 +868,35 @@
                 }
             }
         }
+        async function cancelReservation(reservationId) {
+  if (!reservationId) return;
+
+  const ok = confirm("Bạn chắc chắn muốn hủy đặt tủ này không?");
+  if (!ok) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/user/cancel-reservation`, {
+      method: "POST",
+      headers: {
+        ...authManager.getAuthHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ reservationId }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || "Không thể hủy đặt tủ.");
+    }
+
+    alert("Đã hủy đặt tủ thành công.");
+    await loadReservations();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Có lỗi khi hủy đặt tủ.");
+  }
+}
+
 
         async function verifyPickupOtp() {
             const otpInput = document.getElementById("pickupOtp");

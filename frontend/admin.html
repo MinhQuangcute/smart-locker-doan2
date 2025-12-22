@@ -342,6 +342,7 @@
       border-radius: 999px;
       background: #22c55e;
     }
+    #reservationsTable { table-layout: auto; }
 
     #reservationsTable {
       width: 100%;
@@ -382,6 +383,38 @@
       font-size: 11px;
       opacity: 0.85;
     }
+    /* Overdue table: giống style reservations/logs */
+#overdueTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+#overdueTable th,
+#overdueTable td {
+  padding: 6px 6px;
+  border-bottom: 1px solid rgba(148, 121, 72, 0.4);
+  text-align: left;
+  vertical-align: top;
+}
+
+#overdueTable th {
+  font-weight: 600;
+  font-size: 11px;
+}
+
+/* Disabled button nhìn rõ là disable chứ không “mất” */
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none !important;
+  filter: grayscale(0.25);
+}
+#tabLockers { display: none; }
+#panelLockers { display: none !important; }
+
+
   </style>
 </head>
 <body>
@@ -472,6 +505,42 @@
             <button class="btn-secondary" onclick="loadAdminReservations()">
               <i class="fas fa-rotate-right"></i> Tải lại danh sách đơn
             </button>
+            <button class="btn-secondary" id="btnToggleOverdue" onclick="toggleOverdueTable()">
+              <i class="fas fa-triangle-exclamation"></i> Đơn quá hạn
+            </button>
+            <!-- ✅ BẢNG ĐƠN QUÁ HẠN (ẨN MẶC ĐỊNH) -->
+<div id="overdueWrap" style="display:none; margin-top:10px; padding:10px; border-radius:14px; background:#ffffff; border:1px dashed rgba(180,119,41,0.45);">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+    <div style="font-weight:600;">
+      <i class="fas fa-triangle-exclamation"></i> Danh sách đơn quá hạn (lâu nhất lên đầu)
+    </div>
+    <button class="btn-secondary" onclick="loadOverdueTable()">
+      <i class="fas fa-rotate-right"></i> Tải lại
+    </button>
+  </div>
+
+  <div class="small-text" id="overdueSummary" style="margin-top:4px;"></div>
+
+  <div id="overdueEmpty" style="margin-top:6px; font-size:12px; color:#9ca3af; display:none;">
+    Không có đơn quá hạn cần xử lý.
+  </div>
+
+  <table id="overdueTable" style="display:none;">
+    <thead>
+      <tr>
+        <th>reservationId</th>
+        <th>LockerId</th>
+        <th>doorState</th>
+        <th>hasItem</th>
+        <th>status</th>
+        <th>receiverPhone</th>
+        <th>Hết hạn lúc</th>
+      </tr>
+    </thead>
+    <tbody id="overdueTbody"></tbody>
+  </table>
+</div>
+
 
             <div class="small-text" style="margin-top:4px;" id="reservationsSummary"></div>
 
@@ -488,7 +557,7 @@
                   <th>Mã đặt tủ</th>
                   <th>Trạng thái</th>
                   <th>Hết hạn</th>
-                  <th>Thao tác</th>
+                
                 </tr>
               </thead>
               <tbody id="reservationsTbody"></tbody>
@@ -584,10 +653,12 @@
     tabReservations.addEventListener("click", () => {
       setActiveTab("reservations");
       loadAdminReservations();
+      startAutoRefresh();
     });
     tabLogs.addEventListener("click", () => {
       setActiveTab("logs");
       loadAdminLogs();
+      stopAutoRefresh();
     });
 
     // === Điều khiển tủ ===
@@ -734,14 +805,7 @@
             </span>
           `;
 
-          let actionHtml = "";
-          if (isExpired && r.status !== "opened") {
-            actionHtml = `
-              <button class="btn-danger" onclick="forceOpenExpired('${r.lockerId || "Locker1"}', '${r.id}')">
-                <i class="fas fa-bolt"></i> Mở cưỡng chế
-              </button>
-            `;
-          }
+       
 
           tr.innerHTML = `
             <td>${createdAt}</td>
@@ -750,7 +814,7 @@
             <td>${r.bookingCode || "-"}</td>
             <td>${statusHtml}</td>
             <td>${expiresAt}</td>
-            <td>${actionHtml}</td>
+          
           `;
           tbody.appendChild(tr);
         });
@@ -844,11 +908,192 @@
         alert(err.message || "Không thể tải nhật ký.");
       }
     }
+    // ====== TOGGLE OVERDUE TABLE ======
+let overdueVisible = false;
+
+function toggleOverdueTable() {
+  const wrap = document.getElementById("overdueWrap");
+  const btn = document.getElementById("btnToggleOverdue");
+  overdueVisible = !overdueVisible;
+
+  if (wrap) wrap.style.display = overdueVisible ? "block" : "none";
+  if (btn) {
+    btn.innerHTML = overdueVisible
+      ? '<i class="fas fa-eye-slash"></i> Ẩn đơn quá hạn'
+      : '<i class="fas fa-triangle-exclamation"></i> Đơn quá hạn';
+  }
+
+  // vừa bật lên thì load luôn
+  if (overdueVisible) loadOverdueTable();
+}
+
+function normalizeDoorState(s) {
+  return String(s || "").trim().toLowerCase();
+}
+function isDoorOpenState(doorState) {
+  const ds = normalizeDoorState(doorState);
+  return ds === "open" || ds === "opened" || ds === "opening";
+}
+function isDoorClosedState(doorState) {
+  const ds = normalizeDoorState(doorState);
+  return ds === "close" || ds === "closed" || ds === "closing";
+}
+
+// ====== LOAD OVERDUE TABLE ======
+async function loadOverdueTable() {
+  const tbody = document.getElementById("overdueTbody");
+  const table = document.getElementById("overdueTable");
+  const emptyEl = document.getElementById("overdueEmpty");
+  const summaryEl = document.getElementById("overdueSummary");
+  if (!tbody) return;
+
+  tbody.innerHTML = "";
+  if (emptyEl) emptyEl.style.display = "none";
+  if (table) table.style.display = "none";
+  if (summaryEl) summaryEl.textContent = "Đang tải...";
+
+  try {
+    const res = await fetch(`${API_BASE}/admin/overdue-table`, {
+      method: "GET",
+      headers: authManager.getAuthHeaders()
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || "Không lấy được danh sách đơn quá hạn");
+    }
+
+    const rows = data.rows || [];
+    if (!rows.length) {
+      if (emptyEl) emptyEl.style.display = "block";
+      if (summaryEl) summaryEl.textContent = "0 đơn quá hạn cần xử lý.";
+      return;
+    }
+
+    if (table) table.style.display = "table";
+    if (summaryEl) summaryEl.textContent = `Có ${rows.length} đơn quá hạn (lâu nhất lên đầu).`;
+
+    rows.forEach(r => {
+      const tr = document.createElement("tr");
+      const exp = r.expiresAt ? new Date(r.expiresAt).toLocaleString("vi-VN") : "-";
+      const hasItemText = (r.hasItem === true) ? "true" : (r.hasItem === false ? "false" : "-");
+
+      const disableOpen = !!r.doorState && isDoorOpenState(r.doorState);
+      const disableClose = !!r.doorState && isDoorClosedState(r.doorState);
+      const disableConfirm = (r.hasItem === true); // nếu có cảm biến thì chặn nhả tủ khi còn hàng
+
+      tr.innerHTML = `
+        <td class="small-text">${r.reservationId || "-"}</td>
+        <td>${r.lockerId || "-"}</td>
+        <td>${r.doorState || "-"}</td>
+        <td>${hasItemText}</td>
+        <td>${r.status || "-"}</td>
+        <td class="small-text">${r.receiverPhone || "-"}</td>
+        <td>${exp}</td>
+        <td>
+          <button class="btn-primary" style="margin-top:0;" ${disableOpen ? "disabled" : ""} onclick="adminOverdueOpen('${r.reservationId}')">
+            <i class="fas fa-unlock"></i> Mở
+          </button>
+          <button class="btn-secondary" style="margin-top:0;" ${disableClose ? "disabled" : ""} onclick="adminOverdueClose('${r.reservationId}')">
+            <i class="fas fa-lock"></i> Đóng
+          </button>
+          <button class="btn-danger" style="margin-top:0;" ${disableConfirm ? "disabled" : ""} onclick="adminOverdueConfirmPicked('${r.reservationId}', ${r.hasItem === true ? "true" : "false"})">
+            <i class="fas fa-check"></i> Xác nhận lấy
+          </button>
+          ${r.hasItem === true ? `<div class="small-text" style="color:#b91c1c;margin-top:4px;">hasItem=true → chưa cho xác nhận nhả tủ.</div>` : ``}
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+  } catch (err) {
+    console.error(err);
+    if (summaryEl) summaryEl.textContent = err.message || "Lỗi tải danh sách đơn quá hạn.";
+  }
+}
+
+// ====== ACTIONS ======
+async function adminOverdueOpen(reservationId) {
+  const ok = confirm("Mở tủ để thu hồi?\nHãy chắc chắn bạn đang đứng tại tủ.");
+  if (!ok) return;
+
+  const res = await fetch(`${API_BASE}/admin/overdue/open`, {
+    method: "POST",
+    headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ reservationId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) return alert(data.error || "Mở tủ thất bại");
+
+  alert("Đã gửi lệnh mở.");
+  loadOverdueTable();
+}
+
+async function adminOverdueClose(reservationId) {
+  const res = await fetch(`${API_BASE}/admin/overdue/close`, {
+    method: "POST",
+    headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ reservationId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) return alert(data.error || "Đóng tủ thất bại");
+
+  alert("Đã gửi lệnh đóng.");
+  loadOverdueTable();
+}
+
+async function adminOverdueConfirmPicked(reservationId, hasItem) {
+  if (hasItem === true) {
+    alert("hasItem=true → chưa thể xác nhận nhả tủ. Hãy lấy hết hàng trước.");
+    return;
+  }
+
+  const ok = confirm("Xác nhận admin đã lấy hàng và nhả tủ?");
+  if (!ok) return;
+
+  const res = await fetch(`${API_BASE}/admin/overdue/confirm-picked`, {
+    method: "POST",
+    headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ reservationId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) return alert(data.error || "Xác nhận thất bại");
+
+  alert("Đã xác nhận lấy hàng & nhả tủ.");
+  loadOverdueTable();
+  loadAdminReservations();
+}
+let autoTimer = null;
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  autoTimer = setInterval(() => {
+    // chỉ refresh cái đang hiển thị
+    if (panelReservations.style.display !== "none") {
+      loadAdminReservations();
+      if (overdueVisible) loadOverdueTable();
+    }
+    if (panelLockers.style.display !== "none") {
+      refreshLockerStatus();
+    }
+  }, 5000); // 5 giây, bạn chỉnh 3-10s tuỳ thích
+}
+
+function stopAutoRefresh() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null;
+}
+
+
 
     // Khởi tạo ban đầu
     document.addEventListener("DOMContentLoaded", () => {
       refreshLockerStatus();
       loadAdminReservations();
+      startAutoRefresh();
     });
   </script>
 </body>

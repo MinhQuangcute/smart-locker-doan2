@@ -10,6 +10,8 @@ const jwt = require("jsonwebtoken");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const cookieParser = require("cookie-parser");
+const cron = require("node-cron");
+
 // cookie-parser: xử lý cookie trong request
 // Danh sách tủ logic theo kích thước (demo)
 // Thực tế: mỗi lockerId có thể là 1 ngăn tủ thật.
@@ -23,6 +25,60 @@ const ADMIN_PHONES = [
   "0976983308", // số admin (bạn sửa lại nếu cần)
   // thêm các số khác nếu cần
 ];
+//hasitem các kiểu
+function parseHasItem(v) {
+  if (v === true || v === "true") return true;
+  if (v === false || v === "false") return false;
+
+  if (v === 1 || v === "1") return true;
+  if (v === 0 || v === "0") return false;
+
+  // nếu thiếu / không rõ -> null (không có sensor hoặc chưa gửi)
+  return null;
+}
+
+
+//hàm quét đơn quá hạn 
+async function flagOverdueReservations() {
+  const now = Date.now();
+
+  // Lấy các đơn có expiresAt <= now (nên indexOn expiresAt để nhanh)
+  const snap = await db
+    .ref("/Reservations")
+    .orderByChild("expiresAt")
+    .endAt(now)
+    .once("value");
+
+  const obj = snap.val() || {};
+  const updates = {};
+  let count = 0;
+
+  for (const [id, r] of Object.entries(obj)) {
+    if (!r) continue;
+
+    const exp = Number(r.expiresAt || 0);
+    if (!exp) continue;
+
+    const st = String(r.status || "").trim().toLowerCase();
+
+    // CHỈ những trạng thái phù hợp với route /overdue/open của bạn
+    if (!["loaded", "opened"].includes(st)) continue;
+
+    // đã gắn cờ rồi thì bỏ qua
+    if (r.needAdminPickup === true) continue;
+
+    updates[`/Reservations/${id}/needAdminPickup`] = true;
+    updates[`/Reservations/${id}/needAdminPickupAt`] = now;
+    count++;
+  }
+
+  if (count > 0) {
+    await db.ref().update(updates);
+  }
+
+  return { flagged: count };
+}
+
 
 // Hàm chuẩn hoá SĐT về dạng 0xxxxxxxxx
 function normalizePhone(phone) {
@@ -60,6 +116,20 @@ function lockerRefById(lockerId) { //doi node firebase thanh lockerid
   if (!lockerId) throw new Error("lockerId is required");
   return db.ref(`/Lockers/${lockerId}`);
 }
+//hàm quét
+cron.schedule("* * * * *", async () => { // mỗi 1 phút
+  try {
+    const { flagged } = await flagOverdueReservations();
+    if (flagged) console.log(`[cron] flagged overdue: ${flagged}`);
+  } catch (e) {
+    console.error("[cron] flagOverdueReservations error:", e);
+  }
+});
+
+
+
+
+
 async function claimLocker(lockerId, reservationId, receiverPhone) {
   const ref = db.ref(`/Lockers/${lockerId}`);
 
@@ -118,7 +188,7 @@ const isProduction = process.env.NODE_ENV === "production";
 // Phone Auth Configuration
 // =======================
 const OTP_EXPIRY_MINUTES = 1;
-const RESERVATION_EXPIRY_HOURS = 24 * 3;
+//const RESERVATION_EXPIRY_HOURS = 24 * 3;
 const PICKUP_OTP_MAX_ATTEMPTS = 5;     // tối đa 5 lần sai
 const PICKUP_OTP_LOCK_MINUTES = 5;    // khoá 5 phút
 const OTP_SEND_COOLDOWN_SECONDS = 30;
@@ -178,6 +248,8 @@ function requireAdmin(req, res, next) {
 // 5.Admin: xem tất cả đơn đặt tủ
 app.get("/api/admin/reservations-all", authenticateToken, requireAdmin, async (req, res) => {
   try {
+    await flagOverdueReservations();
+
     const snap = await db.ref("/Reservations").once("value");
     const data = snap.val() || {};
 //Đoạn này là JS/TS để biến đổi data (object) thành một mảng reservations rồi sắp xếp theo thời gian tạo mới nhất trước.
@@ -616,7 +688,9 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
   const now = Date.now();
   const reservationId = uuidv4();
   const bookingCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = now + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000);
+ // const expiresAt = now + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000);
+ const expiresAt = now + 120 * 1000; // 10 giây
+
 
   let lockerId = null;
 
@@ -1401,7 +1475,6 @@ if (st === "opened") {
     });
 
     await db.ref("/Logs").push().set({
-      phone: "shipper",
       locker: lockerId,
       action: "confirm_loaded_by_shipper",
       timestamp: ts,
@@ -1421,19 +1494,17 @@ if (st === "opened") {
 
 
 
-
-
-
-//16.cư dân đóng tủ
+//16. cư dân đóng tủ (NO TRANSACTION)
 app.post("/api/user/close-locker", authenticateToken, async (req, res) => {
-  const phoneNumber = req.user.phoneNumber;
+  const phoneNumber = String(req.user?.phoneNumber || "").trim();
   if (!phoneNumber) return res.status(401).json({ error: "Unauthorized" });
 
   try {
     const ts = Date.now();
 
     // 1) tìm reservation của user đang opened (mới nhất)
-    const snap = await db.ref("/Reservations")
+    const snap = await db
+      .ref("/Reservations")
       .orderByChild("receiverPhone")
       .equalTo(phoneNumber)
       .once("value");
@@ -1442,56 +1513,66 @@ app.post("/api/user/close-locker", authenticateToken, async (req, res) => {
     const entries = Object.entries(all).map(([id, r]) => ({ id, r }));
 
     const opened = entries
-      .filter(({ r }) => r && r.status === "opened" && !r.closedAt)
+      .filter(({ r }) => r && String(r.status || "").trim() === "opened" && !r.closedAt)
       .sort((a, b) => (b.r.openedAt || 0) - (a.r.openedAt || 0));
 
     if (!opened.length) {
       return res.status(400).json({ error: "Không có đơn nào đang mở để đóng tủ" });
     }
 
-    const { id: reservationId, r } = opened[0];
-    const lockerId = String(r.lockerId || "").trim().toUpperCase();
-    if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
-
+    const { id: reservationId } = opened[0];
     const reservationRef = db.ref(`/Reservations/${reservationId}`);
-    const lockerRef = lockerRefById(lockerId);
 
-    // 2) transaction close reservation (chống bấm 2 lần)
-    const tx = await reservationRef.transaction((cur) => {
-      if (!cur) return;
-      // quyền: chỉ đúng chủ đơn
-      if (cur.receiverPhone  !== phoneNumber) return;
+    // 2) đọc lại reservation mới nhất (chống trạng thái đổi giữa chừng)
+    const latestSnap = await reservationRef.once("value");
+    const latest = latestSnap.val();
+    if (!latest) return res.status(400).json({ error: "Reservation không tồn tại" });
 
-      // idempotent
-      if (cur.status === "closed") return cur;
+    // quyền: chỉ đúng chủ đơn
+    if (String(latest.receiverPhone || "").trim() !== phoneNumber) {
+      return res.status(403).json({ error: "Bạn không có quyền đóng đơn này" });
+    }
 
-      // chỉ cho đóng khi opened
-      if (cur.status !== "opened") return;
+    const st = String(latest.status || "").trim();
 
-      return {
-        ...cur,
-        status: "closed",
-        closedAt: ts,
-      };
-    });
+    // idempotent: đã closed rồi
+    if (st === "closed" || latest.closedAt) {
+      return res.status(409).json({ error: "Đơn đã được đóng trước đó" });
+    }
 
-    if (!tx.committed) {
-      const latest = tx.snapshot?.val();
+    // chỉ cho đóng khi opened
+    if (st !== "opened") {
       return res.status(400).json({
-        error: `Không thể đóng tủ (trạng thái hiện tại: ${latest?.status || "unknown"})`,
+        error: `Không thể đóng tủ (trạng thái hiện tại: ${st || "unknown"})`,
       });
     }
 
-    // 3) update locker + nhả tủ
+    const lockerId = String(latest.lockerId || "").trim().toUpperCase();
+    if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
+
+    const lockerRef = lockerRefById(lockerId);
+
+    // 3) update reservation -> closed
+    await reservationRef.update({
+      status: "done",
+      closedAt: ts,
+    });
+
+    // 4) update locker + nhả tủ
     await lockerRef.update({
       command: "close",
       status: "idle",
       reservationId: null,
       reservedBy: null,
       last_update: ts,
+      lastCommandAction:"close",
+      lastCommandAt:Date.now(),
+      lastCommandBy:req.user.phoneNumber,
+
+
     });
 
-    // 4) log
+    // 5) log
     await db.ref("/Logs").push().set({
       phone: phoneNumber,
       locker: lockerId,
@@ -1501,12 +1582,481 @@ app.post("/api/user/close-locker", authenticateToken, async (req, res) => {
       reservationId,
     });
 
-    return res.json({ success: true, lockerId, reservationId, message: "Đã gửi lệnh đóng tủ." });
+    return res.json({
+      success: true,
+      lockerId,
+      reservationId,
+      message: "Đã gửi lệnh đóng tủ.",
+    });
   } catch (err) {
     console.error("[user/close-locker] Error:", err);
     return res.status(500).json({ error: "Lỗi khi đóng tủ" });
   }
 });
+
+
+// Cư dân hủy đặt tủ (chỉ khi booked và chưa hết hạn)
+app.post("/api/user/cancel-reservation", authenticateToken, async (req, res) => {
+  try {
+    const phoneNumber = String(req.user?.phoneNumber || "").trim();
+    if (!phoneNumber) return res.status(401).json({ error: "Unauthorized" });
+
+    const reservationId = String(req.body?.reservationId ?? "").trim();
+    if (!reservationId) return res.status(400).json({ error: "reservationId required" });
+
+    const reservationRef = db.ref(`/Reservations/${reservationId}`);
+
+    // 1) đọc reservation
+    const cur = (await reservationRef.once("value")).val();
+    if (!cur) return res.status(404).json({ error: "Không tìm thấy đơn đặt tủ" });
+    const lockerId = String(cur.lockerId || "").trim().toUpperCase();
+if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
+
+
+    // 2) quyền
+    if (String(cur.receiverPhone || "").trim() !== phoneNumber) {
+      return res.status(403).json({ error: "Bạn không có quyền hủy đơn này" });
+    }
+
+    const now = Date.now();
+    const st = String(cur.status || "").trim();
+
+    // idempotent
+    if (st === "cancelled") {
+      return res.json({ success: true, reservationId, message: "Đơn đã được hủy trước đó." });
+    }
+
+    const expired = now > Number(cur.expiresAt || 0);
+
+    // ✅ Case A: booked + expired => auto cancel + release locker
+    if (st === "booked" && expired) {
+      await reservationRef.update({
+        status: "cancelled",
+        cancelledAt: now,
+        cancelledBy: phoneNumber,
+        cancelReason: "expired_auto_cancel",
+      });
+
+      await lockerRefById(lockerId).update({
+        status: "idle",
+        reservationId: null,
+        reservedBy: null,
+        last_update: now,
+        lastCommandAction: "release",
+        lastCommandAt: now,
+        lastCommandBy: phoneNumber,
+        lastCommandReservationId: reservationId,
+      });
+
+      await db.ref("/Logs").push().set({
+        phone: phoneNumber,
+        locker: lockerId,
+        action: "cancel_reservation_expired_auto",
+        timestamp: now,
+        result: "success",
+        reservationId,
+      });
+
+      return res.json({
+        success: true,
+        reservationId,
+        lockerId,
+        message: "Đơn đã hết hạn nên hệ thống tự hủy và nhả tủ.",
+      });
+    }
+
+    // ✅ Case B: booked + chưa hết hạn => hủy bình thường
+    if (st === "booked" && !expired) {
+      await reservationRef.update({
+        status: "cancelled",
+        cancelledAt: now,
+        cancelledBy: phoneNumber,
+        cancelReason: "user_cancel",
+      });
+
+      await lockerRefById(lockerId).update({
+        status: "idle",
+        reservationId: null,
+        reservedBy: null,
+        last_update: now,
+        lastCommandAction: "release",
+        lastCommandAt: now,
+        lastCommandBy: phoneNumber,
+        lastCommandReservationId: reservationId,
+      });
+
+      await db.ref("/Logs").push().set({
+        phone: phoneNumber,
+        locker: lockerId,
+        action: "cancel_reservation_by_user",
+        timestamp: now,
+        result: "success",
+        reservationId,
+      });
+
+      return res.json({ success: true, reservationId, lockerId, message: "Đã hủy đặt tủ và nhả tủ." });
+    }
+
+    // ❗ Case C: không cho hủy các trạng thái khác (loaded/opened/closed/done…)
+    // Nếu expired mà đã loaded/opened => để admin xử lý vì có thể có hàng
+    if (expired) {
+      return res.status(409).json({
+        error: `Đơn đã hết hạn ở trạng thái '${st}'. Vui lòng liên hệ admin để xử lý (có thể còn hàng trong tủ).`,
+      });
+    }
+
+    return res.status(409).json({ error: `Không thể hủy vì đơn đang ở trạng thái '${st}'.` });
+  } catch (err) {
+    console.error("[user/cancel-reservation] Error:", err);
+    return res.status(500).json({ error: "Lỗi khi hủy đặt tủ" });
+  }
+});
+
+
+//admin xử lý hết hạn hàng loạt
+app.post("/api/admin/expire-reservations-batch-to-done", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const now = Date.now();
+    const limit = Math.min(Number(req.body?.limit || 200), 1000); // giới hạn chống quét quá lớn
+
+    // Lấy các đơn có expiresAt <= now
+    const snap = await db.ref("/Reservations")
+      .orderByChild("expiresAt")
+      .endAt(now)
+      .limitToLast(limit)
+      .once("value");
+
+    const all = snap.val() || {};
+    const entries = Object.entries(all).map(([id, r]) => ({ id, r }));
+
+    // Lọc điều kiện chuyển done
+    const allowed = new Set(["booked", "loaded", "opened"]);
+    const toDone = entries.filter(({ r }) => {
+      if (!r) return false;
+      const st = String(r.status || "").trim();
+      if (st === "done") return false;
+      if (!allowed.has(st)) return false;
+      const exp = Number(r.expiresAt || 0);
+      return exp > 0 && now > exp;
+    });
+
+    if (!toDone.length) {
+      return res.json({ success: true, count: 0, message: "Không có đơn hết hạn phù hợp để chuyển done." });
+    }
+
+    // Multi-path update cho nhanh
+    const updates = {};
+    const doneBy = String(req.user?.phoneNumber || req.user?.uid || "admin");
+
+    for (const { id, r } of toDone) {
+      const prev = String(r.status || "").trim();
+      updates[`/Reservations/${id}/status`] = "done";
+      updates[`/Reservations/${id}/doneAt`] = now;
+      updates[`/Reservations/${id}/doneReason`] = "expired";
+      updates[`/Reservations/${id}/doneBy`] = doneBy;
+      updates[`/Reservations/${id}/prevStatus`] = prev;
+    }
+
+    await db.ref().update(updates);
+
+    // ✅ KHÔNG update locker
+    return res.json({
+      success: true,
+      count: toDone.length,
+      message: `Đã chuyển ${toDone.length} đơn hết hạn sang done (không đổi trạng thái tủ).`,
+    });
+  } catch (err) {
+    console.error("[admin/expire-reservations-batch-to-done] Error:", err);
+    return res.status(500).json({ error: "Lỗi batch xử lý đơn hết hạn" });
+  }
+});
+
+app.post("/api/admin/expire-reservation-to-done", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const reservationId = String(req.body?.reservationId ?? "").trim();
+    if (!reservationId) return res.status(400).json({ error: "reservationId required" });
+
+    const reservationRef = db.ref(`/Reservations/${reservationId}`);
+    const cur = (await reservationRef.once("value")).val();
+    if (!cur) return res.status(404).json({ error: "Reservation not found" });
+
+    const now = Date.now();
+    const expiresAt = Number(cur.expiresAt || 0);
+    const st = String(cur.status || "").trim();
+
+    // idempotent: đã done rồi thì thôi
+    if (st === "done") {
+      return res.json({ success: true, reservationId, message: "Reservation đã ở trạng thái done." });
+    }
+
+    // chỉ xử lý nếu thật sự hết hạn
+    if (!expiresAt || now <= expiresAt) {
+      return res.status(409).json({ error: "Đơn chưa hết hạn, không thể chuyển done." });
+    }
+
+    // tuỳ bạn chặn/cho phép các trạng thái nào được chuyển done khi hết hạn
+    // ví dụ: booked/loaded/opened đều được, hoặc chỉ loaded/opened
+    const allowed = new Set(["booked", "loaded", "opened"]);
+    if (!allowed.has(st)) {
+      return res.status(409).json({ error: `Trạng thái hiện tại '${st}' không cho chuyển done.` });
+    }
+
+    await reservationRef.update({
+      status: "done",
+      doneAt: now,
+      doneReason: "expired",
+      doneBy: String(req.user?.phoneNumber || req.user?.uid || "admin"),
+      prevStatus: st,
+    });
+
+    // ✅ KHÔNG update locker. Tủ giữ nguyên trạng thái.
+
+    return res.json({ success: true, reservationId, message: "Đã chuyển đơn hết hạn sang done (không đổi trạng thái tủ)." });
+  } catch (err) {
+    console.error("[admin/expire-reservation-to-done] Error:", err);
+    return res.status(500).json({ error: "Lỗi xử lý đơn hết hạn" });
+  }
+});
+
+// GET /api/admin/overdue-table
+app.get("/api/admin/overdue-table", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const now = Date.now();
+      // ✅ Realtime: vừa admin mở bảng là quét & gắn cờ luôn
+      await flagOverdueReservations();
+
+    // Lấy các đơn đã gắn cờ needAdminPickup=true (do job quét quá hạn)
+    const snap = await db.ref("/Reservations")
+      .orderByChild("needAdminPickup")
+      .equalTo(true)
+      .once("value");
+
+    const all = snap.val() || {};
+    const list = Object.entries(all)
+      .map(([id, r]) => ({ id, ...(r || {}) }))
+      // chỉ lấy loaded/opened (có thể còn hàng)
+      .filter(r => {
+        const st = String(r.status || "").trim().toLowerCase();
+        const exp = Number(r.expiresAt || 0);
+        return exp > 0 && now > exp && ["loaded", "opened"].includes(st);
+      })
+      
+      // sort quá hạn lâu nhất: expiresAt càng nhỏ càng lâu
+      .sort((a, b) => (Number(a.expiresAt || 0) - Number(b.expiresAt || 0)));
+
+    // Join thêm thông tin locker (doorState, hasItem)
+    const rows = await Promise.all(list.map(async (r) => {
+      const lockerId = String(r.lockerId || "").trim();
+      let doorState = "";
+      let hasItem = "";
+
+      if (lockerId) {
+        const locker = (await lockerRefById(lockerId).once("value")).val() || {};
+        doorState = String(locker.doorState || "").trim();
+        hasItem = parseHasItem(locker.hasItem);
+
+
+      }
+
+      return {
+        reservationId: r.id,
+        lockerId,
+        doorState,
+        hasItem,
+        status: String(r.status || "").trim(),
+        receiverPhone: String(r.receiverPhone || "").trim(),
+        expiresAt: Number(r.expiresAt || 0),
+        overdueMinutes: r.expiresAt ? Math.max(0, Math.floor((now - Number(r.expiresAt)) / 60000)) : null,
+      };
+    }));
+
+    return res.json({ success: true, count: rows.length, rows });
+  } catch (e) {
+    console.error("[admin/overdue-table] error:", e);
+    return res.status(500).json({ error: "Lỗi lấy danh sách đơn hết hạn" });
+  }
+});
+
+//nut mở tủ
+app.post("/api/admin/overdue/open", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const reservationId = String(req.body?.reservationId || "").trim();
+    if (!reservationId) return res.status(400).json({ error: "reservationId required" });
+
+    const reservationRef = db.ref(`/Reservations/${reservationId}`);
+    const r = (await reservationRef.once("value")).val();
+    if (!r) return res.status(404).json({ error: "Reservation not found" });
+
+    const st = String(r.status || "").trim();
+    if (!["loaded", "opened"].includes(st)) {
+      return res.status(409).json({ error: `Trạng thái '${st}' không cho admin mở để thu hồi.` });
+    }
+
+    const now = Date.now();
+    const expired = now > Number(r.expiresAt || 0);
+    if (!(r.needAdminPickup === true || expired)) {
+      return res.status(409).json({ error: "Đơn chưa hết hạn / chưa được gắn cờ thu hồi." });
+    }
+
+    const lockerId = String(r.lockerId || "").trim().toUpperCase();
+    if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
+
+    const lockerRef = lockerRefById(lockerId);
+    const locker = (await lockerRef.once("value")).val() || {};
+    const doorState = String(locker.doorState || "").trim().toLowerCase();
+    if (doorState && ["open", "opened", "opening"].includes(doorState)) {
+      return res.status(409).json({ error: "Cửa đang mở sẵn, không gửi lệnh mở nữa." });
+    }
+
+    const adminPhone = String(req.user?.phoneNumber || "admin");
+
+    await lockerRef.update({
+      command: "open",
+      last_update: now,
+      lastCommandAction: "open",
+      lastCommandAt: now,
+      lastCommandBy: adminPhone,
+      lastCommandReservationId: reservationId,
+    });
+
+    await db.ref("/Logs").push().set({
+      phone: adminPhone,
+      locker: lockerId,
+      action: "admin_open_overdue",
+      timestamp: now,
+      result: "success",
+      reservationId,
+    });
+
+    return res.json({ success: true, lockerId, reservationId, message: "Đã gửi lệnh mở tủ." });
+  } catch (e) {
+    console.error("[admin/overdue/open] error:", e);
+    return res.status(500).json({ error: "Lỗi mở tủ" });
+  }
+});
+
+//nut đóng tủ
+
+app.post("/api/admin/overdue/close", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const reservationId = String(req.body?.reservationId || "").trim();
+    if (!reservationId) return res.status(400).json({ error: "reservationId required" });
+
+    const r = (await db.ref(`/Reservations/${reservationId}`).once("value")).val();
+    if (!r) return res.status(404).json({ error: "Reservation not found" });
+
+    const lockerId = String(r.lockerId || "").trim().toUpperCase();
+    if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
+
+    const lockerRef = lockerRefById(lockerId);
+    const locker = (await lockerRef.once("value")).val() || {};
+    const doorState = String(locker.doorState || "").trim().toLowerCase();
+
+    // Nếu có cảm biến và đã đóng rồi -> báo OK luôn
+    if (doorState && ["closed", "close", "closing"].includes(doorState)) {
+      return res.json({ success: true, lockerId, reservationId, message: "Cửa đã đóng sẵn." });
+    }
+
+    const now = Date.now();
+    const adminPhone = String(req.user?.phoneNumber || "admin");
+
+    await lockerRef.update({
+      command: "close",
+      last_update: now,
+      lastCommandAction: "close",
+      lastCommandAt: now,
+      lastCommandBy: adminPhone,
+      lastCommandReservationId: reservationId,
+    });
+
+    await db.ref("/Logs").push().set({
+      phone: adminPhone,
+      locker: lockerId,
+      action: "admin_close_overdue",
+      timestamp: now,
+      result: "success",
+      reservationId,
+    });
+
+    return res.json({ success: true, lockerId, reservationId, message: "Đã gửi lệnh đóng tủ." });
+  } catch (e) {
+    console.error("[admin/overdue/close] error:", e);
+    return res.status(500).json({ error: "Lỗi đóng tủ" });
+  }
+});
+//confirm
+app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const reservationId = String(req.body?.reservationId || "").trim();
+    if (!reservationId) return res.status(400).json({ error: "reservationId required" });
+
+    const reservationRef = db.ref(`/Reservations/${reservationId}`);
+    const r = (await reservationRef.once("value")).val();
+    if (!r) return res.status(404).json({ error: "Reservation not found" });
+
+    const st = String(r.status || "").trim();
+    if (!["loaded", "opened"].includes(st)) {
+      // idempotent
+      if (["cleared", "done", "closed"].includes(st)) {
+        return res.json({ success: true, reservationId, message: "Đơn đã được xử lý trước đó." });
+      }
+      return res.status(409).json({ error: `Không thể xác nhận lấy hàng khi trạng thái '${st}'.` });
+    }
+
+    const lockerId = String(r.lockerId || "").trim().toUpperCase();
+    if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
+
+    const now = Date.now();
+    const adminPhone = String(req.user?.phoneNumber || "admin");
+
+    // 1) cập nhật reservation
+    await reservationRef.update({
+      status: "cleared", // hoặc "done" tuỳ bạn
+      clearedAt: now,
+      needAdminPickup: false,
+      needAdminPickup: false,
+      needAdminPickupAt: null,
+      adminPickupStatus: "picked",
+      adminPickupPickedAt: now,
+      adminPickupBy: adminPhone,
+    });
+
+    // 2) nhả locker về idle + đóng tủ luôn cho chắc
+    await lockerRefById(lockerId).update({
+      command: "close",
+      status: "idle",
+      reservationId: null,
+      reservedBy: null,
+      last_update: now,
+      lastCommandAction: "close",
+      lastCommandAt: now,
+      lastCommandBy: adminPhone,
+      lastCommandReservationId: reservationId,
+    });
+
+    await db.ref("/Logs").push().set({
+      phone: adminPhone,
+      locker: lockerId,
+      action: "admin_confirm_picked_overdue",
+      timestamp: now,
+      result: "success",
+      reservationId,
+    });
+
+    return res.json({ success: true, reservationId, lockerId, message: "Đã xác nhận lấy hàng và nhả tủ." });
+  } catch (e) {
+    console.error("[admin/overdue/confirm-picked] error:", e);
+    return res.status(500).json({ error: "Lỗi xác nhận lấy hàng" });
+  }
+});
+
+
+
+
+
+
+
+
 
 
 
