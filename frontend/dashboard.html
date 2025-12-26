@@ -723,9 +723,11 @@
                 // load lại lịch sử
                 loadReservations();
             } catch (err) {
-                console.error(err);
-                alert(err.message || "Không thể đặt tủ.");
-            } finally {
+  console.error("CLOSE ERROR:", err);
+  console.error("STACK:\n", err?.stack);
+  alert(err?.message || "Có lỗi xảy ra khi đóng tủ.");
+}
+ finally {
                 setReserveLoading(false);
             }
         }

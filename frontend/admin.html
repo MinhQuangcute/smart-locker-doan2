@@ -652,8 +652,8 @@ button:disabled {
     tabLockers.addEventListener("click", () => setActiveTab("lockers"));
     tabReservations.addEventListener("click", () => {
       setActiveTab("reservations");
-      loadAdminReservations();
-      startAutoRefresh();
+     loadAdminReservations();
+      //startAutoRefresh();
     });
     tabLogs.addEventListener("click", () => {
       setActiveTab("logs");
@@ -661,87 +661,7 @@ button:disabled {
       stopAutoRefresh();
     });
 
-    // === Điều khiển tủ ===
-    async function refreshLockerStatus() {
-      try {
-        const res = await fetch(`${API_BASE}/locker/Locker1/status`, {
-          method: "GET",
-          headers: authManager.getAuthHeaders()
-        });
-        const data = await res.json().catch(() => ({}));
-        const stText = document.getElementById("lockerStatusText");
-        const lastEl = document.getElementById("lockerLastUpdate");
 
-        if (!res.ok) {
-          if (stText) {
-            stText.className = "badge badge-status expired";
-            stText.innerHTML = '<span class="status-dot-small" style="background:#ef4444;"></span> Lỗi đọc trạng thái';
-          }
-          return;
-        }
-
-        const status = data.status || "unknown";
-        const lastUpdate = data.last_update ? new Date(data.last_update).toLocaleString("vi-VN") : "--";
-
-        if (stText) {
-          stText.className = "badge badge-status";
-          let colorDot = "#22c55e";
-          let label = "Không rõ";
-
-          if (status === "open") {
-            stText.classList.add("opened");
-            colorDot = "#22c55e";
-            label = "Đang mở";
-          } else if (status === "close" || status === "closed") {
-            stText.classList.add("booked");
-            colorDot = "#f97316";
-            label = "Đang đóng";
-          } else {
-            stText.classList.add("expired");
-            colorDot = "#ef4444";
-            label = "Không rõ";
-          }
-
-          stText.innerHTML = `<span class="status-dot-small" style="background:${colorDot};"></span> ${label}`;
-        }
-
-        if (lastEl) lastEl.textContent = lastUpdate;
-      } catch (err) {
-        console.error(err);
-      }
-    }
-
-    async function controlLocker(action) {
-      if (!["open", "close"].includes(action)) return;
-
-      if (action === "open") {
-        const ok = confirm("Bạn có chắc chắn muốn MỞ tủ Locker 1 từ xa không?");
-        if (!ok) return;
-      }
-
-      try {
-        const res = await fetch(`${API_BASE}/command`, {
-          method: "POST",
-          headers: {
-            ...authManager.getAuthHeaders(),
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ lockerId: "Locker1", action })
-        });
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.success === false) {
-          alert(data.error || "Không gửi được lệnh điều khiển tủ.");
-          return;
-        }
-
-        alert(`Đã gửi lệnh '${action}' tới Locker 1.`);
-        refreshLockerStatus();
-      } catch (err) {
-        console.error(err);
-        alert("Lỗi khi gửi lệnh điều khiển tủ.");
-      }
-    }
 
     // === Admin: xem tất cả đơn, cưỡng chế mở khi quá hạn ===
     async function loadAdminReservations() {
@@ -752,7 +672,7 @@ button:disabled {
 
       if (!tbody) return;
       tbody.innerHTML = "";
-      if (emptyEl) emptyEl.style.display = "none";
+      if (emptyEl) emptyEl.style.display = "none"
       if (table) table.style.display = "none";
       if (summaryEl) summaryEl.textContent = "Đang tải danh sách đơn...";
 
@@ -829,35 +749,7 @@ button:disabled {
       }
     }
 
-    async function forceOpenExpired(lockerId, reservationId) {
-      const ok = confirm("Bạn chắc chắn muốn cưỡng chế mở tủ " + lockerId + " cho đơn đã quá hạn?\nHãy đảm bảo đã kiểm tra thực tế tại tủ.");
-      if (!ok) return;
-
-      try {
-        const res = await fetch(`${API_BASE}/command`, {
-          method: "POST",
-          headers: {
-            ...authManager.getAuthHeaders(),
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ lockerId: lockerId || "Locker1", action: "open" })
-        });
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.success === false) {
-          throw new Error(data.error || "Không gửi được lệnh cưỡng chế mở tủ");
-        }
-
-        alert("Đã gửi lệnh cưỡng chế mở tủ. Vui lòng kiểm tra trực tiếp tại tủ.");
-        refreshLockerStatus();
-        loadAdminReservations();
-      } catch (err) {
-        console.error(err);
-        alert(err.message || "Có lỗi khi cưỡng chế mở tủ.");
-      }
-    }
-
-    // === Admin: load logs ===
+// === Admin: load logs ===
     async function loadAdminLogs() {
       const tbody = document.getElementById("logsTbody");
       const table = document.getElementById("logsTable");
@@ -1077,9 +969,9 @@ function startAutoRefresh() {
       if (overdueVisible) loadOverdueTable();
     }
     if (panelLockers.style.display !== "none") {
-      refreshLockerStatus();
+     // refreshLockerStatus();
     }
-  }, 5000); // 5 giây, bạn chỉnh 3-10s tuỳ thích
+  }, 10000); // 5 giây, bạn chỉnh 3-10s tuỳ thích
 }
 
 function stopAutoRefresh() {
@@ -1091,9 +983,8 @@ function stopAutoRefresh() {
 
     // Khởi tạo ban đầu
     document.addEventListener("DOMContentLoaded", () => {
-      refreshLockerStatus();
       loadAdminReservations();
-      startAutoRefresh();
+     // startAutoRefresh();
     });
   </script>
 </body>
