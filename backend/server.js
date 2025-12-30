@@ -36,6 +36,83 @@ function parseHasItem(v) {
   // nếu thiếu / không rõ -> null (không có sensor hoặc chưa gửi)
   return null;
 }
+//hàm tự cancel đơn booked khi quá hạn
+async function autoCancelOverdueBookedReservations(limit = 200) {
+  const now = Date.now();
+
+  // Query theo expiresAt (cần index nếu data lớn)
+  const snap = await db.ref("/Reservations")
+    .orderByChild("expiresAt")
+    .endAt(now - 1)
+    .limitToFirst(limit)
+    .once("value");
+
+  const all = snap.val() || {};
+  const entries = Object.entries(all);
+
+  if (!entries.length) return { canceled: 0 };
+
+  const updates = {};
+  let canceled = 0;
+
+  // Đọc lockerRef theo batch (ở đây làm tuần tự cho dễ hiểu; tối ưu sau cũng được)
+  for (const [reservationId, r] of entries) {
+    const st = String(r?.status || "").trim();
+    if (st !== "booked") continue;
+
+    // chống double-cancel / trạng thái đã đổi
+    if (r.canceledAt || r.closedAt || r.openedAt || r.loadedAt) continue;
+
+    // cập nhật reservation
+    updates[`/Reservations/${reservationId}/status`] = "auto-canceled";
+    updates[`/Reservations/${reservationId}/canceledAt`] = now;
+    updates[`/Reservations/${reservationId}/cancelReason`] = "expired_booked";
+    updates[`/Reservations/${reservationId}/autoCanceled`] = true;
+
+    const lockerId = String(r?.lockerId || "").trim().toUpperCase();
+    if (lockerId) {
+      // chỉ nhả nếu locker đang trỏ đúng reservation này
+      const lockerSnap = await db.ref(`/Lockers/${lockerId}`).once("value");
+      const locker = lockerSnap.val() || {};
+      if (String(locker.reservationId || "") === reservationId) {
+        updates[`/Lockers/${lockerId}/status`] = "idle";
+        updates[`/Lockers/${lockerId}/reservationId`] = null;
+        updates[`/Lockers/${lockerId}/reservedBy`] = null;
+        updates[`/Lockers/${lockerId}/command`] = null;
+        updates[`/Lockers/${lockerId}/last_update`] = now;
+      }
+    }
+
+    // log (bạn có thể gom log riêng, hoặc push từng cái)
+    const logKey = db.ref("/Logs").push().key;
+    updates[`/Logs/${logKey}`] = {
+      action: "auto_cancel_booked_expired",
+      timestamp: now,
+      reservationId,
+      locker: r?.lockerId || null,
+      result: "success",
+    };
+
+    canceled++;
+  }
+
+  if (canceled > 0) {
+    await db.ref().update(updates);
+  }
+
+  return { canceled };
+}
+
+
+cron.schedule("* * * * *", async () => {
+  try {
+    const { canceled } = await autoCancelOverdueBookedReservations();
+    if (canceled) console.log("[cron] auto-canceled booked:", canceled);
+  } catch (e) {
+    console.error("[cron] autoCancelOverdueBookedReservations error:", e);
+  }
+});
+
 //hàm quét đơn quá hạn 
 async function flagOverdueReservations() {
   const now = Date.now();
@@ -113,7 +190,7 @@ function lockerRefById(lockerId) { //doi node firebase thanh lockerid
   if (!lockerId) throw new Error("lockerId is required");
   return db.ref(`/Lockers/${lockerId}`);
 }
-//hàm quét
+//hàm quét gắn cờ đơn quá hạn cho admin
 cron.schedule("* * * * *", async () => { // mỗi 1 phút
   try {
     const { flagged } = await flagOverdueReservations();
@@ -144,6 +221,17 @@ async function claimLocker(lockerId, reservationId, receiverPhone) {
 
   return result.committed === true;
 }
+// xóa command pending
+async function cleanupCommandIfMatch(lockerRef, cmdId) {
+  await lockerRef.child("command").transaction((cur) => {
+    if (cur && cur.id === cmdId && cur.status === "PENDING") return null; // xóa đúng lệnh của mình
+    return cur; // không đụng lệnh khác
+  });
+}
+
+
+
+
 //hàm nhả tủ khi user đặt
 async function releaseLockerIfMatch(lockerId, reservationId) {
   const ref = db.ref(`/Lockers/${lockerId}`);
@@ -212,7 +300,7 @@ async function offlineWatchdogJob() {
 // mỗi 30s
 setInterval(() => offlineWatchdogJob().catch(console.error), 30000);
 
-
+/*
 //fakescript cho esp
 const ALL_LOCKERS = Object.values(LOCKERS_BY_SIZE).flat();
 
@@ -227,7 +315,7 @@ setInterval(async () => {
 
   await db.ref().update(updates);
   console.log("heartbeat", new Date(now).toISOString());
-}, 10000);
+}, 10000);   */
 
 function makeCommandId() {
   return "cmd_" + Date.now() + "_" + Math.random().toString(16).slice(2);
@@ -296,6 +384,271 @@ async function assertLockerOnline(lockerId) {
 
   return { ref, locker };
 }
+
+
+const IN_USE_TIMEOUT_MS = 1 * 60 * 1000; // 1 phút
+
+function normalizeDoorState(s) {
+  return String(s || "").trim().toLowerCase();
+}
+function isDoorOpenState(ds) {
+  ds = normalizeDoorState(ds);
+  return ds === "open" || ds === "opened" || ds === "opening";
+}
+function isDoorClosedState(ds) {
+  ds = normalizeDoorState(ds);
+  return ds === "close" || ds === "closed" || ds === "closing";
+}
+
+function genPickupOtp6() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// gửi command qua transaction giống style bạn đang dùng
+async function sendCommandTx(lockerRef, cmdObj) {
+  const tx = await lockerRef.child("command").transaction((current) => {
+    if (current && current.status === "PENDING") return; // đang bận
+    return cmdObj;
+  });
+  return !!tx.committed;
+}
+
+// finalize theo inUseBy + hasItem
+async function finalizeInUse(reservationId, r, lockerId, locker, now) {
+  const inUseBy = String(r?.inUseBy || "").trim().toLowerCase(); // "shipper" | "receiver" | "user"
+  const hasItem = parseHasItem(locker?.hasItem); // dùng helper của bạn
+
+  // không có sensor hàng -> đừng đoán, chuyển needs_admin
+  if (hasItem === null) {
+    const updates = {};
+    updates[`/Lockers/${lockerId}/status`] = "needs_admin";
+    updates[`/Lockers/${lockerId}/last_update`] = now;
+
+    updates[`/Reservations/${reservationId}/needAdminPickup`] = true;
+    updates[`/Reservations/${reservationId}/needAdminPickupAt`] = now;
+    updates[`/Reservations/${reservationId}/adminPickupReason`] = "hasItem_unknown_on_inuse_finalize";
+
+    await db.ref().update(updates);
+
+    await db.ref("/Logs").push().set({
+      locker: lockerId,
+      action: "watchdog_inuse_needs_admin_hasItem_unknown",
+      timestamp: now,
+      reservationId,
+      result: "failed",
+    });
+    return;
+  }
+
+  // ===== CASE 1: shipper dropoff =====
+  if (inUseBy === "shipper") {
+    if (hasItem === true) {
+      const existingOtp = String(r.pickupOtp || r.otpCode || "").trim();
+      const pickupOtp = existingOtp || genPickupOtp6();
+
+      const updates = {};
+      updates[`/Reservations/${reservationId}/status`] = "loaded";
+      updates[`/Reservations/${reservationId}/loadedAt`] = now;
+      updates[`/Reservations/${reservationId}/pickupOtp`] = pickupOtp;
+      updates[`/Reservations/${reservationId}/otpCode`] = pickupOtp;
+      updates[`/Reservations/${reservationId}/otpGeneratedAt`] = now;
+      updates[`/Reservations/${reservationId}/otpGeneratedBy`] = existingOtp ? "existing" : "watchdog";
+
+      updates[`/Lockers/${lockerId}/status`] = "loaded";
+      updates[`/Lockers/${lockerId}/command`] = null;
+      updates[`/Lockers/${lockerId}/last_update`] = now;
+
+      await db.ref().update(updates);
+
+      await db.ref("/Logs").push().set({
+        locker: lockerId,
+        action: "watchdog_finalize_dropoff_loaded",
+        timestamp: now,
+        reservationId,
+        result: "success",
+      });
+      return;
+    }
+
+    // hasItem === false -> tự hủy + nhả tủ
+    const updates = {};
+    updates[`/Reservations/${reservationId}/status`] = "auto-canceled";
+    updates[`/Reservations/${reservationId}/canceledAt`] = now;
+    updates[`/Reservations/${reservationId}/cancelReason`] = "in_use_timeout_dropoff_no_item";
+
+    updates[`/Lockers/${lockerId}/status`] = "idle";
+    updates[`/Lockers/${lockerId}/reservationId`] = null;
+    updates[`/Lockers/${lockerId}/reservedBy`] = null;
+    updates[`/Lockers/${lockerId}/command`] = null;
+    updates[`/Lockers/${lockerId}/last_update`] = now;
+
+    await db.ref().update(updates);
+
+    await db.ref("/Logs").push().set({
+      locker: lockerId,
+      action: "watchdog_finalize_dropoff_autocancel",
+      timestamp: now,
+      reservationId,
+      result: "success",
+    });
+    return;
+  }
+
+  // ===== CASE 2: receiver/user pickup =====
+  if (inUseBy === "receiver" || inUseBy === "user") {
+    if (hasItem === false) {
+      // lấy hết hàng -> done + nhả tủ
+      const updates = {};
+      updates[`/Reservations/${reservationId}/status`] = "done";
+      updates[`/Reservations/${reservationId}/closedAt`] = now;
+      updates[`/Reservations/${reservationId}/doneBy`] = "watchdog";
+
+      updates[`/Lockers/${lockerId}/status`] = "idle";
+      updates[`/Lockers/${lockerId}/reservationId`] = null;
+      updates[`/Lockers/${lockerId}/reservedBy`] = null;
+      updates[`/Lockers/${lockerId}/command`] = null;
+      updates[`/Lockers/${lockerId}/last_update`] = now;
+
+      await db.ref().update(updates);
+
+      await db.ref("/Logs").push().set({
+        locker: lockerId,
+        action: "watchdog_finalize_pickup_done",
+        timestamp: now,
+        reservationId,
+        result: "success",
+      });
+      return;
+    }
+
+    // hasItem === true -> còn hàng => KHÔNG nhả tủ, quay về loaded
+    const updates = {};
+    updates[`/Reservations/${reservationId}/status`] = "loaded";
+    updates[`/Reservations/${reservationId}/revertReason`] = "pickup_timeout_still_has_item";
+    updates[`/Reservations/${reservationId}/revertedAt`] = now;
+
+    updates[`/Lockers/${lockerId}/status`] = "loaded";
+    updates[`/Lockers/${lockerId}/command`] = null;
+    updates[`/Lockers/${lockerId}/last_update`] = now;
+
+    await db.ref().update(updates);
+
+    await db.ref("/Logs").push().set({
+      locker: lockerId,
+      action: "watchdog_revert_pickup_to_loaded_has_item_true",
+      timestamp: now,
+      reservationId,
+      result: "success",
+    });
+    return;
+  }
+
+  // inUseBy lạ -> needs_admin
+  await db.ref(`/Lockers/${lockerId}`).update({ status: "needs_admin", last_update: now });
+  await db.ref(`/Reservations/${reservationId}`).update({
+    needAdminPickup: true,
+    needAdminPickupAt: now,
+    adminPickupReason: "unknown_inUseBy"
+  });
+}
+
+async function watchdogInUse() {
+  const now = Date.now();
+
+  const snap = await db.ref("/Reservations")
+    .orderByChild("status")
+    .equalTo("in_use")
+    .once("value");
+
+  const all = snap.val() || {};
+  const entries = Object.entries(all);
+
+  for (const [reservationId, r] of entries) {
+    try {
+      const inUseAt = Number(r?.inUseAt || 0);
+      if (!inUseAt || (now - inUseAt < IN_USE_TIMEOUT_MS)) continue;
+
+      const lockerId = String(r?.lockerId || "").trim().toUpperCase();
+      if (!lockerId) continue;
+
+      const lockerRef = lockerRefById(lockerId);
+      const locker = (await lockerRef.once("value")).val() || {};
+
+      // tránh xử nhầm (quan trọng!)
+      if (String(locker.reservationId || "") !== reservationId) continue;
+
+      const doorState = normalizeDoorState(locker.doorState);
+      const hasDoorSensor = !!doorState;
+
+      // Nếu có sensor và cửa đã đóng -> finalize luôn
+      if (hasDoorSensor && isDoorClosedState(doorState)) {
+        await finalizeInUse(reservationId, r, lockerId, locker, Date.now());
+        continue;
+      }
+
+      // Nếu cửa đang mở hoặc không có sensor cửa -> thử đóng tự động
+      await assertLockerOnline(lockerId);
+
+      const cmdId = makeCommandId();
+      const issuedAt = Date.now();
+
+      const committed = await sendCommandTx(lockerRef, {
+        id: cmdId,
+        action: "close",
+        status: "PENDING",
+        issuedAt,
+        reservationId,
+        by: "watchdog_inuse"
+      });
+
+      if (!committed) continue;
+
+      const ack = await waitAck(lockerId, cmdId, 15000);
+
+      if (!ack) {
+        await cleanupCommandIfMatch(lockerRef, cmdId);
+        await db.ref("/Logs").push().set({
+          locker: lockerId,
+          action: "watchdog_close_timeout",
+          timestamp: Date.now(),
+          reservationId,
+          result: "failed",
+          cmdId
+        });
+        continue;
+      }
+
+      if (ack.status === "FAILED") {
+        await cleanupCommandIfMatch(lockerRef, cmdId);
+        await db.ref("/Logs").push().set({
+          locker: lockerId,
+          action: "watchdog_close_failed",
+          timestamp: Date.now(),
+          reservationId,
+          result: "failed",
+          cmdId
+        });
+        continue;
+      }
+
+      // ACK OK -> dọn command + đọc lại locker mới nhất -> finalize
+      await cleanupCommandIfMatch(lockerRef, cmdId);
+      const after = (await lockerRef.once("value")).val() || {};
+      await finalizeInUse(reservationId, r, lockerId, after, Date.now());
+
+    } catch (e) {
+      console.error("[watchdogInUse] item error:", e);
+    }
+  }
+}
+
+cron.schedule("*/10 * * * * *", async () => { //10s thay vi 1 phut
+  try {
+    await watchdogInUse();
+  } catch (e) {
+    console.error("[cron] watchdogInUse error:", e);
+  }
+});
 
 
 // =======================
@@ -733,7 +1086,7 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
   const reservationId = uuidv4();
   const bookingCode = Math.floor(100000 + Math.random() * 900000).toString();
  //const expiresAt = now + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000);
- const expiresAt = now + 120 * 1000; // 10 giây
+ const expiresAt = now + 600 * 1000; // 10 giây
 
 
   let lockerId = null;
@@ -916,6 +1269,7 @@ app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) =>
   if (!reservationId || !otpCode) {
     return res.status(400).json({ error: "Thiếu thông tin xác thực" });
   }
+    
 
   try {
     // 1. Lấy dữ liệu Reservation & Kiểm tra tồn tại
@@ -998,24 +1352,36 @@ if (!result.committed) {
     // Hàm này sẽ poll Firebase mỗi 500ms để tìm lastAck khớp với cmdId
     const ack = await waitAck(lockerId, cmdId); // Chờ tối đa 12 giây
 
-    if (!ack) {
-      return res.status(504).json({ 
-        error: "Tủ không phản hồi. Có thể do mất kết nối mạng, vui lòng thử lại sau." 
-      });
-    }
+   
 
-    if (ack.status === "FAILED") {
-      return res.status(500).json({ error: "Tủ báo lỗi vật lý (Kẹt khóa...)" });
+    if (!ack) {
+      await cleanupCommandIfMatch(lockerRef, cmdId);
+      return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
     }
+    
+    if (ack.status === "FAILED") {
+      await cleanupCommandIfMatch(lockerRef, cmdId);
+      return res.status(500).json({ error: "Tủ báo lỗi vật lý khi mở khóa." });
+    }
+    
+    // ACK OK -> dọn command luôn cho sạch
+    await cleanupCommandIfMatch(lockerRef, cmdId);
+    
 
     // 7. Cập nhật kết quả cuối cùng sau khi ESP32 đã Ack thành công
     const updates = {};
-    updates[`/Reservations/${reservationId}/status`] = "opened"; // Kết thúc chu kỳ đơn hàng
     updates[`/Reservations/${reservationId}/openedAt`] = now;
     updates[`/Reservations/${reservationId}/otpAttempts`] = 0;
-    updates[`/Lockers/${lockerId}/status`] = "idle"; // Nhả tủ về trạng thái trống
-    updates[`/Lockers/${lockerId}/reservationId`] = null;
-    updates[`/Lockers/${lockerId}/command`] = null; // Xóa lệnh cũ
+    
+    updates[`/Reservations/${reservationId}/status`] = "in_use";
+    updates[`/Reservations/${reservationId}/inUseAt`] = now;
+    updates[`/Reservations/${reservationId}/inUseBy`] = "receiver"; // hoặc "user"
+    
+    updates[`/Lockers/${lockerId}/status`] = "in_use";
+    updates[`/Lockers/${lockerId}/reservationId`] = reservationId; // rất nên giữ
+    updates[`/Lockers/${lockerId}/command`] = null;
+    updates[`/Lockers/${lockerId}/last_update`] = now;
+    
 
     await db.ref().update(updates);
 
@@ -1115,24 +1481,38 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
     }
 
     // 4. Đợi phản hồi từ ESP32 (waitAck)
-    const ack = await waitAck(lockerId, cmdId); 
+    const ack = await waitAck(lockerId, cmdId);
 
     if (!ack) {
-      // Nếu timeout, nên xóa lệnh PENDING để giải phóng tủ cho lần thử sau
-      await lockerRef.child("command").remove();
+      await cleanupCommandIfMatch(lockerRef, cmdId);
       return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
     }
-
+    
     if (ack.status === "FAILED") {
+      await cleanupCommandIfMatch(lockerRef, cmdId);
       return res.status(500).json({ error: "Tủ báo lỗi vật lý khi mở khóa." });
     }
-
+    
+    // ACK OK -> dọn command luôn cho sạch
+    await cleanupCommandIfMatch(lockerRef, cmdId);
+    
     // 5. Thành công -> Update trạng thái đơn và Log
     // Lưu ý: Lúc này status đơn vẫn là "booked" hoặc chuyển sang "loading" 
     // Trạng thái "loaded" chỉ nên set khi ESP32 báo cửa đã ĐÓNG lại.
     const updates = {};
   //  updates[`/Reservations/${reservationId}/status`] = "shipping"; // Đang trong quá trình bỏ hàng
     updates[`/Reservations/${reservationId}/shipperOpenedAt`] = now;
+    updates[`/Reservations/${reservationId}/status`] = "in_use";
+
+updates[`/Reservations/${reservationId}/inUseBy`] = "shipper"; // hoặc receiver/admin
+
+
+updates[`/Lockers/${lockerId}/status`] = "in_use";
+updates[`/Reservations/${reservationId}/inUseAt`] = now;
+updates[`/Lockers/${lockerId}/reservationId`] = reservationId;
+updates[`/Lockers/${lockerId}/last_update`] = now;
+
+
     
     await db.ref().update(updates);
 
@@ -1182,7 +1562,8 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
         .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0))[0];
   
       // 2. Kiểm tra Logic (Status & Expiry)
-      if (cur.status !== "booked" && cur.status !== "shipping") {
+     // if (cur.status !== "booked" && cur.status !== "shipping") {
+         if (cur.status !== "in_use" ) {
         return res.status(400).json({ error: `Đơn đang ở trạng thái ${cur.status}, không thể xác nhận.` });
       }
       if (Date.now() > Number(cur.expiresAt)) {
@@ -1197,9 +1578,11 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
       await assertLockerOnline(lockerId);
   
       // QUAN TRỌNG: Kiểm tra cảm biến hàng hóa (hasItem)
-      if (locker.hasItem === false) {
+
+      const hasItem = parseHasItem(locker.hasItem);
+      if (hasItem === false) {
         return res.status(409).json({ 
-          error: "Cảm biến chưa thấy hàng! Vui lòng bỏ hàng vào đúng vị trí." 
+          error: "Chưa thấy hàng trong tủ." 
         });
       }
 
@@ -1245,14 +1628,21 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
   
       // 5. Đợi ESP32 xác nhận đã đóng cửa thành công (waitAck)
       const ack = await waitAck(lockerId, cmdId, 15000); // Đợi 15s cho shipper kịp đóng cửa
-  
+      
+
       if (!ack) {
-        return res.status(504).json({ error: "Tủ không phản hồi. Hãy chắc chắn bạn đã đóng chặt cửa tủ." });
+        await cleanupCommandIfMatch(lockerRef, cmdId);
+        return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
       }
-  
+      
       if (ack.status === "FAILED") {
-        return res.status(500).json({ error: "Lỗi vật lý: Không thể chốt khóa." });
+        await cleanupCommandIfMatch(lockerRef, cmdId);
+        return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
       }
+      
+      // ACK OK -> dọn command luôn cho sạch
+      await cleanupCommandIfMatch(lockerRef, cmdId);
+      
   
       // 6. Hoàn tất: Tạo OTP người nhận và Update toàn bộ trạng thái
       const pickupOtp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -1307,15 +1697,47 @@ app.post("/api/user/close-locker", authenticateToken, async (req, res) => {
       .orderByChild("receiverPhone")
       .equalTo(phoneNumber)
       .once("value");
-
+/*
     const all = snap.val() || {};
     const openedEntries = Object.entries(all)
-      .filter(([id, r]) => r.status === "opened")
+      .filter(([id, r]) => r.status === "in_use")
       .sort((a, b) => (b[1].openedAt || 0) - (a[1].openedAt || 0));
 
     if (openedEntries.length === 0) {
       return res.status(400).json({ error: "Bạn không có tủ nào đang chờ đóng." });
     }
+*/
+
+const all = snap.val() || {};
+
+const openedEntries = Object.entries(all)
+  .filter(([id, r]) => {
+    if (!r) return false;
+
+    // Chỉ lấy những đơn đang in_use
+    if (String(r.status || "").trim() !== "in_use") return false;
+
+    // Chỉ cho USER đóng khi inUseBy là receiver/user (tránh case shipper)
+    const by = String(r.inUseBy || "").trim().toLowerCase();
+    if (by !== "receiver" && by !== "user") return false;
+
+    // (tuỳ chọn) nếu muốn chắc hơn: phải có openedAt
+    // if (!r.openedAt) return false;
+
+    return true;
+  })
+  // sort ưu tiên cái mới nhất
+  .sort((a, b) => {
+    const ta = Number(a[1].inUseAt || a[1].openedAt || 0);
+    const tb = Number(b[1].inUseAt || b[1].openedAt || 0);
+    return tb - ta;
+  });
+
+if (openedEntries.length === 0) {
+  return res.status(400).json({
+    error: "Bạn không có tủ nào đang mở để đóng ."
+  });
+}
 
     const [reservationId, cur] = openedEntries[0];
     const lockerId = cur.lockerId;
@@ -1335,13 +1757,16 @@ app.post("/api/user/close-locker", authenticateToken, async (req, res) => {
     // QUAN TRỌNG: Kiểm tra cảm biến hàng hóa (hasItem)
 
     
-// 3) Check cảm biến hàng hóa
-const hasItem = lockerSnap.child("hasItem").val();
-    if (hasItem === true) {
-      return res.status(409).json({ 
-        error: "Vẫn còn hàng trong tủ.Qúy khách vui lòng kiểm tra lại" 
-      });
-    }
+// 3) Check cảm biến hàng hóa (chuẩn hoá)
+const hasItemRaw = lockerSnap.child("hasItem").val();
+const hasItem = parseHasItem(hasItemRaw);
+
+// Nếu cảm biến báo vẫn còn hàng -> chặn đóng
+if (hasItem === true) {
+  return res.status(409).json({
+    error: "Vẫn còn hàng trong tủ. Quý khách vui lòng kiểm tra lại."
+  });
+}
 
     // 3. Gửi lệnh ĐÓNG TỦ (CLOSE) qua Transaction hoặc Update
     const cmdId = makeCommandId();
@@ -1381,15 +1806,21 @@ if (!tx.committed) {
     // 4. Đợi ESP32 xác nhận (WaitAck) - Đảm bảo tủ ĐÃ KHÓA THẬT
     const ack = await waitAck(lockerId, cmdId );
 
-    if (!ack) {
-      return res.status(504).json({ 
-        error: "Tủ không phản hồi. Vui lòng đóng chặt cửa và thử lại." 
-      });
-    }
+   
 
-    if (ack.status === "FAILED") {
-      return res.status(500).json({ error: "Lỗi vật lý: Khóa không thể chốt." });
+    if (!ack) {
+      await cleanupCommandIfMatch(lockerRef, cmdId);
+      return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
     }
+    
+    if (ack.status === "FAILED") {
+      await cleanupCommandIfMatch(lockerRef, cmdId);
+      return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
+    }
+    
+    // ACK OK -> dọn command luôn cho sạch
+    await cleanupCommandIfMatch(lockerRef, cmdId);
+    
 
     // 5. ATOMIC UPDATE: Cập nhật nhiều node cùng lúc (Multi-path Update)
     // Thay thế hoàn toàn cho Transaction

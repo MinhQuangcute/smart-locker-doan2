@@ -708,8 +708,9 @@ button:disabled {
           const expiresAt = r.expiresAt
             ? new Date(r.expiresAt).toLocaleString("vi-VN")
             : "-";
+            const isDone = (String(r.status || "").toLowerCase() === "done");
+const isExpired = !isDone && r.expiresAt && now > r.expiresAt;
 
-          const isExpired = r.expiresAt && now > r.expiresAt;
           if (isExpired) expiredCount++;
 
           let statusClass = "badge-status";
