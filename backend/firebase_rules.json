@@ -1,0 +1,31 @@
+{
+    "rules": {
+        ".read": false,
+        ".write": false,
+        "OTPs": {
+            ".indexOn": [
+                "phoneNumber"
+            ]
+        },
+        "Reservations": {
+            // Các field được dùng trong orderByChild() ở server.js
+            ".indexOn": [
+                "receiverPhone",
+                "status",
+                "expiresAt",
+                "needAdminPickup"
+            ]
+        },
+        "Incidents": {
+            ".indexOn": [
+                "lockerId"
+            ]
+        },
+        "Lockers": {
+            // Nếu sau này có query locker theo trạng thái thì thêm "status"
+            ".indexOn": [
+                "status"
+            ]
+        }
+    }
+}

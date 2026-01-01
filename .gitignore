@@ -110,3 +110,5 @@ package-lock.json
 .env
 tudo.ino
 
+esp32_firmware
+esp.js

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -62,13 +63,11 @@
             inset: 0;
             background-image:
                 linear-gradient(135deg, rgba(244, 162, 38, 0.08), transparent 55%),
-                repeating-linear-gradient(
-                    -45deg,
+                repeating-linear-gradient(-45deg,
                     rgba(249, 207, 124, 0.08),
                     rgba(249, 207, 124, 0.08) 6px,
                     transparent 6px,
-                    transparent 12px
-                );
+                    transparent 12px);
             pointer-events: none;
         }
 
@@ -163,22 +162,32 @@
             filter: brightness(1.05);
             transform: translateY(-1px);
         }
+
         .btn-danger {
-  margin-top: 6px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: none;
-  cursor: pointer;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: linear-gradient(135deg, #ef4444, #b91c1c);
-  color: #fff;
-  box-shadow: 0 4px 10px rgba(185, 28, 28, 0.35);
-}
-.btn-danger:hover { filter: brightness(1.05); transform: translateY(-1px); }
-.btn-danger:disabled { opacity: 0.7; cursor: wait; box-shadow: none; }
+            margin-top: 6px;
+            padding: 5px 12px;
+            border-radius: 999px;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: linear-gradient(135deg, #ef4444, #b91c1c);
+            color: #fff;
+            box-shadow: 0 4px 10px rgba(185, 28, 28, 0.35);
+        }
+
+        .btn-danger:hover {
+            filter: brightness(1.05);
+            transform: translateY(-1px);
+        }
+
+        .btn-danger:disabled {
+            opacity: 0.7;
+            cursor: wait;
+            box-shadow: none;
+        }
 
 
 
@@ -306,7 +315,7 @@
         input[type="text"]:focus {
             border-color: var(--wood-accent);
             box-shadow: 0 0 0 1px rgba(244, 162, 38, 0.25),
-                        0 0 0 4px rgba(244, 162, 38, 0.1);
+                0 0 0 4px rgba(244, 162, 38, 0.1);
             background: #fffbeb;
         }
 
@@ -412,8 +421,99 @@
             margin-top: 4px;
             font-size: 12px;
         }
+
+        /* ===== WIDE MODE (PC/Laptop) ===== */
+        @media (min-width: 900px) {
+
+            /* nới khung tổng thể */
+            .dash-shell {
+                max-width: 1400px !important;
+                width: 100% !important;
+            }
+
+            /* card gần full chiều ngang */
+            .dash-card {
+                width: 100% !important;
+            }
+
+            /* 2 cột rộng hơn, nhìn “đã” hơn */
+            .dash-body {
+                grid-template-columns: minmax(0, 1.65fr) minmax(0, 1.15fr) !important;
+                gap: 18px !important;
+            }
+        }
+
+        /* ===== WIDE MODE VỪA VỪA (PC/Laptop) ===== */
+        @media (min-width: 900px) {
+            .dash-shell {
+                max-width: 1180px !important;
+                /* giảm bớt: vừa đẹp */
+                width: 100% !important;
+            }
+
+            .dash-card {
+                width: 100% !important;
+            }
+
+            /* 2 cột nhưng không “phình” quá */
+            .dash-body {
+                grid-template-columns: minmax(0, 1.45fr) minmax(0, 1.05fr) !important;
+                gap: 14px !important;
+            }
+        }
+
+        /* ===== FIX: BẢNG PHẢI NỞ THEO KHUNG & NHÌN GỌN ===== */
+        #historyTable {
+            width: 100% !important;
+            table-layout: auto !important;
+            /* bỏ fixed để nó giãn hợp lý */
+            border-collapse: collapse;
+        }
+
+        /* mặc định cho phép wrap nhẹ để khỏi bị “cụt” */
+        #historyTable th,
+        #historyTable td {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            vertical-align: middle;
+        }
+
+        /* giữ vài cột ngắn luôn gọn: Thời gian / Tủ / Kích thước / Thao tác */
+        #historyTable th:nth-child(1),
+        #historyTable td:nth-child(1),
+        #historyTable th:nth-child(2),
+        #historyTable td:nth-child(2),
+        #historyTable th:nth-child(3),
+        #historyTable td:nth-child(3),
+        #historyTable th:nth-child(7),
+        #historyTable td:nth-child(7) {
+            white-space: nowrap !important;
+        }
+
+        /* cột mã đặt tủ + trạng thái: đừng wrap lung tung */
+        #historyTable th:nth-child(4),
+        #historyTable td:nth-child(4),
+        #historyTable th:nth-child(5),
+        #historyTable td:nth-child(5) {
+            white-space: nowrap !important;
+        }
+
+        /* nếu màn hình hơi hẹp mà vẫn muốn đẹp: cho cuộn ngang nhẹ */
+        @media (max-width: 520px) {
+            #historyTable {
+                display: block;
+                overflow-x: auto;
+            }
+        }
+
+        /* Khi chỉ có 1 panel (history), cho layout 1 cột để hết khoảng trắng */
+        .dash-body.one-col {
+            grid-template-columns: minmax(0, 1fr) !important;
+        }
     </style>
 </head>
+
 <body>
     <div class="dash-shell">
         <div class="dash-card">
@@ -469,18 +569,20 @@
                 </div>
 
                 <!-- MAIN BODY -->
-                <div class="dash-body">
+                <div class="dash-body" id="dashBody">
+
                     <!-- PANEL ĐẶT TỦ -->
                     <section id="sectionReserve" class="dash-section">
                         <h3><i class="fas fa-box-open"></i> Đặt tủ gửi đồ</h3>
                         <p>
-                            Chọn <b>kích thước tủ</b> phù hợp với gói hàng. Hệ thống sẽ tạo mã đặt tủ, bạn gửi mã đó cho shipper để họ bỏ hàng vào.
+                            Chọn <b>kích thước tủ</b> phù hợp với gói hàng. Hệ thống sẽ tạo mã đặt tủ, bạn gửi mã đó cho
+                            shipper để họ bỏ hàng vào.
                         </p>
 
                         <div class="setting-item">
                             <label for="lockerSize">Kích thước tủ:</label>
                             <select id="lockerSize">
-                                <option value="small">Nhỏ (S)</option>
+
                                 <option value="medium" selected>Vừa (M)</option>
                                 <option value="large">Lớn (L)</option>
                             </select>
@@ -504,7 +606,8 @@
                         <div class="pickup-box">
                             <h4><i class="fas fa-box"></i> Nhận hàng bằng OTP</h4>
                             <p style="margin: 0 0 6px;">
-                                Bấm kiểm tra, nếu có đơn đang chờ hệ thống sẽ hiển thị thông tin tủ. Sau đó nhập OTP mà hệ thống gửi cho bạn.
+                                Bấm kiểm tra, nếu có đơn đang chờ hệ thống sẽ hiển thị thông tin tủ. Sau đó nhập OTP mà
+                                hệ thống gửi cho bạn.
                             </p>
 
                             <button id="btnCheckPickup" class="btn-secondary" onclick="checkReceiverReservation()">
@@ -528,13 +631,15 @@
                             <div id="pickupOtpBox" style="display:none; margin-top:8px;">
                                 <label for="pickupOtp" style="margin-top:4px;">Nhập OTP nhận hàng:</label>
                                 <input type="text" id="pickupOtp" placeholder="6 số OTP nhận hàng">
-                                <button id="btnPickupOpen" class="btn-primary" style="margin-top:8px;" onclick="verifyPickupOtp()">
+                                <button id="btnPickupOpen" class="btn-primary" style="margin-top:8px;"
+                                    onclick="verifyPickupOtp()">
                                     <i class="fas fa-door-open"></i> Mở tủ lấy hàng
                                 </button>
-                                <button id="btnPickupClose" class="btn-secondary" style="margin-top:8px;" onclick="closeLockerUser()">
+                                <button id="btnPickupClose" class="btn-secondary" style="margin-top:8px;"
+                                    onclick="closeLockerUser()">
                                     <i class="fas fa-door-closed"></i> Đóng tủ
-                                  </button>
-                                  
+                                </button>
+
                             </div>
                         </div>
 
@@ -602,6 +707,34 @@
         window.get = get;
 
         console.log('✅ Firebase v12 đã khởi tạo thành công');
+
+        // --- Theo dõi trạng thái kết nối của hệ thống tủ ---
+        const connectionDot = document.getElementById("connectionStatus");
+        const connectionText = document.getElementById("connectionText");
+
+        if (database && ref && onValue) {
+            const lockersRef = ref(database, "Lockers");
+            onValue(lockersRef, (snapshot) => {
+                const lockers = snapshot.val() || {};
+                const now = Date.now();
+                let anyOnline = false;
+
+                Object.values(lockers).forEach(lk => {
+                    const lastSeen = Number(lk.lastSeenAt || 0);
+                    // Ngưỡng offline: 60s
+                    const isOffline = (lk.netState === "offline") || (!lastSeen) || (now - lastSeen > 60000);
+                    if (!isOffline) anyOnline = true;
+                });
+
+                if (anyOnline) {
+                    if (connectionDot) connectionDot.style.background = "#22c55e";
+                    if (connectionText) connectionText.textContent = "Hệ thống tủ đang ONLINE";
+                } else {
+                    if (connectionDot) connectionDot.style.background = "#ef4444";
+                    if (connectionText) connectionText.textContent = "Hệ thống tủ đang OFFLINE (Mất kết nối ESP32)";
+                }
+            });
+        }
     </script>
 
     <!-- Auth -->
@@ -632,11 +765,14 @@
             }
         }
 
+
         // Tabs Đặt tủ / Lịch sử & Nhận hàng
         const tabReserve = document.getElementById("tabReserve");
         const tabHistory = document.getElementById("tabHistory");
         const sectionReserve = document.getElementById("sectionReserve");
         const sectionHistory = document.getElementById("sectionHistory");
+        const dashBody = document.getElementById("dashBody");
+
 
         function showSection(name) {
             if (name === "reserve") {
@@ -644,18 +780,29 @@
                 tabHistory.classList.remove("active");
                 sectionReserve.classList.remove("hidden");
                 sectionHistory.classList.add("hidden");
+
+                dashBody && dashBody.classList.add("one-col");
             } else {
                 tabHistory.classList.add("active");
                 tabReserve.classList.remove("active");
                 sectionHistory.classList.remove("hidden");
                 sectionReserve.classList.add("hidden");
+
+                // ✅ history: về 1 cột, hết khoảng trắng
+                dashBody && dashBody.classList.add("one-col");
                 // mỗi lần chuyển sang tab lịch sử thì tải lại
                 loadReservations();
             }
         }
 
+
         tabReserve.addEventListener("click", () => showSection("reserve"));
         tabHistory.addEventListener("click", () => showSection("history"));
+
+
+
+
+
     </script>
 
     <!-- Logic ĐẶT TỦ & LỊCH SỬ & NHẬN HÀNG -->
@@ -703,7 +850,7 @@
                 if (resultEl) {
                     const expireText = new Date(data.expiresAt).toLocaleString("vi-VN");
                     const sizeLabelMap = {
-                        small: "Nhỏ (S)",
+
                         medium: "Vừa (M)",
                         large: "Lớn (L)"
                     };
@@ -723,11 +870,11 @@
                 // load lại lịch sử
                 loadReservations();
             } catch (err) {
-  console.error("CLOSE ERROR:", err);
-  console.error("STACK:\n", err?.stack);
-  alert(err?.message || "Có lỗi xảy ra khi đóng tủ.");
-}
- finally {
+                console.error("CLOSE ERROR:", err);
+                console.error("STACK:\n", err?.stack);
+                alert(err?.message || "Có lỗi xảy ra khi đóng tủ.");
+            }
+            finally {
                 setReserveLoading(false);
             }
         }
@@ -780,13 +927,13 @@
                     const lockerSizeLabel = sizeLabelMap[r.lockerSize] || (r.lockerSize || "-");
 
                     const canCancel = String(r.status || "").trim() === "booked";
-const actionHtml = canCancel
-  ? `<button class="btn-danger" onclick="cancelReservation('${r.id}')">
+                    const actionHtml = canCancel
+                        ? `<button class="btn-danger" onclick="cancelReservation('${r.id}')">
        <i class="fas fa-ban"></i> Hủy
      </button>`
-  : `<span style="color:#9ca3af;">-</span>`;
+                        : `<span style="color:#9ca3af;">-</span>`;
 
-tr.innerHTML = `
+                    tr.innerHTML = `
   <td>${createdAt}</td>
   <td>${r.lockerId || "-"}</td>
   <td>${lockerSizeLabel}</td>
@@ -871,33 +1018,33 @@ tr.innerHTML = `
             }
         }
         async function cancelReservation(reservationId) {
-  if (!reservationId) return;
+            if (!reservationId) return;
 
-  const ok = confirm("Bạn chắc chắn muốn hủy đặt tủ này không?");
-  if (!ok) return;
+            const ok = confirm("Bạn chắc chắn muốn hủy đặt tủ này không?");
+            if (!ok) return;
 
-  try {
-    const res = await fetch(`${API_BASE}/user/cancel-reservation`, {
-      method: "POST",
-      headers: {
-        ...authManager.getAuthHeaders(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ reservationId }),
-    });
+            try {
+                const res = await fetch(`${API_BASE}/user/cancel-reservation`, {
+                    method: "POST",
+                    headers: {
+                        ...authManager.getAuthHeaders(),
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ reservationId }),
+                });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || "Không thể hủy đặt tủ.");
-    }
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.error || "Không thể hủy đặt tủ.");
+                }
 
-    alert("Đã hủy đặt tủ thành công.");
-    await loadReservations();
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Có lỗi khi hủy đặt tủ.");
-  }
-}
+                alert("Đã hủy đặt tủ thành công.");
+                await loadReservations();
+            } catch (err) {
+                console.error(err);
+                alert(err.message || "Có lỗi khi hủy đặt tủ.");
+            }
+        }
 
 
         async function verifyPickupOtp() {
@@ -953,53 +1100,53 @@ tr.innerHTML = `
         }
 
         async function closeLockerUser() {
-  const btn = document.getElementById("btnPickupClose");
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang đóng tủ...';
-  }
+            const btn = document.getElementById("btnPickupClose");
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang đóng tủ...';
+            }
 
-  try {
-    const res = await fetch(`${API_BASE}/user/close-locker`, {
-      method: "POST",
-      headers: {
-        ...authManager.getAuthHeaders(),
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({}) // không cần gửi gì, backend tự tìm đơn opened theo phoneNumber
-    });
+            try {
+                const res = await fetch(`${API_BASE}/user/close-locker`, {
+                    method: "POST",
+                    headers: {
+                        ...authManager.getAuthHeaders(),
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({}) // không cần gửi gì, backend tự tìm đơn opened theo phoneNumber
+                });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || "Không đóng được tủ.");
-    }
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.error || "Không đóng được tủ.");
+                }
 
-    alert(`Đã gửi lệnh đóng tủ ${data.lockerId || ""}.`);
-    // refresh UI
-    await loadReservations();
+                alert(`Đã gửi lệnh đóng tủ ${data.lockerId || ""}.`);
+                // refresh UI
+                await loadReservations();
 
-    // reset khối nhận hàng
-    currentPickupReservationId = null;
-    const detailEl = document.getElementById("pickupDetail");
-    const otpBox = document.getElementById("pickupOtpBox");
-    const statusEl = document.getElementById("pickupStatus");
-    if (detailEl) detailEl.style.display = "none";
-    if (otpBox) otpBox.style.display = "none";
-    if (statusEl) {
-      statusEl.style.display = "block";
-      statusEl.style.color = "#166534";
-      statusEl.textContent = "Đã đóng tủ. Bạn có thể kiểm tra lại đơn hàng đang chờ.";
-    }
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Có lỗi xảy ra khi đóng tủ.");
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-door-closed"></i> Đóng tủ';
-    }
-  }
-}
+                // reset khối nhận hàng
+                currentPickupReservationId = null;
+                const detailEl = document.getElementById("pickupDetail");
+                const otpBox = document.getElementById("pickupOtpBox");
+                const statusEl = document.getElementById("pickupStatus");
+                if (detailEl) detailEl.style.display = "none";
+                if (otpBox) otpBox.style.display = "none";
+                if (statusEl) {
+                    statusEl.style.display = "block";
+                    statusEl.style.color = "#166534";
+                    statusEl.textContent = "Đã đóng tủ. Bạn có thể kiểm tra lại đơn hàng đang chờ.";
+                }
+            } catch (err) {
+                console.error(err);
+                alert(err.message || "Có lỗi xảy ra khi đóng tủ.");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-door-closed"></i> Đóng tủ';
+                }
+            }
+        }
 
 
         document.addEventListener("DOMContentLoaded", () => {
@@ -1008,4 +1155,5 @@ tr.innerHTML = `
         });
     </script>
 </body>
+
 </html>

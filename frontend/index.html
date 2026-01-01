@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -63,13 +64,11 @@
       inset: 0;
       background-image:
         linear-gradient(135deg, rgba(244, 162, 38, 0.08), transparent 50%),
-        repeating-linear-gradient(
-          -45deg,
+        repeating-linear-gradient(-45deg,
           rgba(249, 207, 124, 0.08),
           rgba(249, 207, 124, 0.08) 6px,
           transparent 6px,
-          transparent 12px
-        );
+          transparent 12px);
       pointer-events: none;
     }
 
@@ -208,7 +207,7 @@
     input[type="text"]:focus {
       border-color: var(--wood-accent);
       box-shadow: 0 0 0 1px rgba(244, 162, 38, 0.25),
-                  0 0 0 4px rgba(244, 162, 38, 0.1);
+        0 0 0 4px rgba(244, 162, 38, 0.1);
       background: #fffbeb;
     }
 
@@ -284,11 +283,19 @@
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-4px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
   </style>
 </head>
+
 <body>
   <div class="auth-shell">
     <div class="auth-card">
@@ -421,9 +428,9 @@
     function showPanel(name) {
       clearStatus();
 
-       // đổi trạng thái nút (in đậm/nổi bật)
-  btnShowLogin.classList.toggle("primary", name === "login");
-  btnShowRegister.classList.toggle("primary", name === "register");
+      // đổi trạng thái nút (in đậm/nổi bật)
+      btnShowLogin.classList.toggle("primary", name === "login");
+      btnShowRegister.classList.toggle("primary", name === "register");
       if (name === "register") {
         panelRegister.classList.remove("hidden");
         panelLogin.classList.add("hidden");
@@ -443,36 +450,36 @@
     btnShowLogin.addEventListener("click", () => showPanel("login"));
 
     // Helper gọi API gửi OTP (giữ giống logic cũ)
-      async function sendOtp(phoneInput) {
-        const phoneNumber = phoneInput.value.trim();
-        if (!phoneNumber) {
-          setStatus("error", "Vui lòng nhập số điện thoại");
-          return null;
-        }
-        setStatus("info", "Đang gửi OTP...");
-
-        try {
-          const res = await fetch("/api/auth/send-otp", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ phoneNumber })
-          });
-          const data = await res.json();
-
-          if (!res.ok || !data.success) {
-            setStatus("error", data.error || "Gửi OTP thất bại");
-            return null;
-          }
-
-          console.log("Dev OTP:", data.otpCode);
-          setStatus("success", "Đã gửi OTP! (xem console server nếu test)");
-          return data.verificationId;
-        } catch (err) {
-          console.error(err);
-          setStatus("error", "Lỗi kết nối server khi gửi OTP");
-          return null;
-        }
+    async function sendOtp(phoneInput) {
+      const phoneNumber = phoneInput.value.trim();
+      if (!phoneNumber) {
+        setStatus("error", "Vui lòng nhập số điện thoại");
+        return null;
       }
+      setStatus("info", "Đang gửi OTP...");
+
+      try {
+        const res = await fetch("/api/auth/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phoneNumber })
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          setStatus("error", data.error || "Gửi OTP thất bại");
+          return null;
+        }
+
+        console.log("Dev OTP:", data.otpCode);
+        setStatus("success", "Đã gửi OTP!");
+        return data.verificationId;
+      } catch (err) {
+        console.error(err);
+        setStatus("error", "Lỗi kết nối server khi gửi OTP");
+        return null;
+      }
+    }
 
     // 1. ĐĂNG KÝ – GỬI OTP
     document.getElementById("regSendOtpBtn").addEventListener("click", async () => {
@@ -579,11 +586,11 @@
         setStatus("success", "Đăng nhập thành công! Đang chuyển vào hệ thống...");
 
         // Nếu là admin -> vào admin.html, còn lại -> dashboard
-    if (role === "admin") {
-      window.location.href = "/admin.html";
-    } else {
-      window.location.href = "/dashboard.html";
-    }
+        if (role === "admin") {
+          window.location.href = "/admin.html";
+        } else {
+          window.location.href = "/dashboard.html";
+        }
       } catch (err) {
         console.error(err);
         setStatus("error", "Lỗi kết nối server khi đăng nhập");
@@ -591,4 +598,5 @@
     });
   </script>
 </body>
+
 </html>

@@ -16,9 +16,8 @@ const cron = require("node-cron");
 // Danh sách tủ logic theo kích thước (demo)
 // Thực tế: mỗi lockerId có thể là 1 ngăn tủ thật.
 const LOCKERS_BY_SIZE = {
-  small: ["S1", "S2"],      // tủ nhỏ
-  medium: ["M1", "M2"],     // tủ vừa
-  large: ["L1","L2"]             // tủ lớn
+  medium: ["M1"],   // tủ vừa
+  large: ["L1"]             // tủ lớn
 };
 // Danh sách số điện thoại admin (chuẩn hoá về dạng 0xxxxxxxxx)
 const ADMIN_PHONES = [
@@ -79,7 +78,7 @@ async function autoCancelOverdueBookedReservations(limit = 200) {
         updates[`/Lockers/${lockerId}/reservationId`] = null;
         updates[`/Lockers/${lockerId}/reservedBy`] = null;
         updates[`/Lockers/${lockerId}/command`] = null;
-        updates[`/Lockers/${lockerId}/last_update`] = now;
+        updates[`/Lockers/${lockerId}/last_server_update`] = now;
       }
     }
 
@@ -136,7 +135,7 @@ async function flagOverdueReservations() {
 
     const st = String(r.status || "").trim().toLowerCase();
 
-    // CHỈ những trạng thái phù hợp với route /overdue/open của bạn
+    // CHỈ những trạng thái phù hợp với route /overdue/open của bạn (thanh toán/gửi xong)
     if (!["loaded", "opened"].includes(st)) continue;
 
     // đã gắn cờ rồi thì bỏ qua
@@ -215,7 +214,7 @@ async function claimLocker(lockerId, reservationId, receiverPhone) {
       status: "booked",
       reservationId,
       reservedBy: receiverPhone,
-      last_update: Date.now(),
+      last_server_update: Date.now(),
     };
   });
 
@@ -244,7 +243,7 @@ async function releaseLockerIfMatch(lockerId, reservationId) {
       status: "idle",
       reservationId: null,
       reservedBy: null,
-      last_update: Date.now(),
+      last_server_update: Date.now(),
     };
   });
 }
@@ -257,7 +256,7 @@ async function ensureOfflineIncident(lockerId) {
     .equalTo(lockerId)
     .once("value");
   const obj = snap.val() || {};
-  const hasOpen = Object.values(obj).some(x => x?.type==="OFFLINE" && x?.status==="open");
+  const hasOpen = Object.values(obj).some(x => x?.type === "OFFLINE" && x?.status === "open");
   if (!hasOpen) {
     await db.ref("/Incidents").push().set({
       type: "OFFLINE",
@@ -333,6 +332,29 @@ async function sendLockerCommand(lockerId, action, reservationId) {
 }
 */
 
+//tranh timeout khi request
+async function onceWithTimeout(ref, ms) {
+  return await Promise.race([
+    ref.once("value"),
+    (async () => { await sleep(ms); throw new Error("FIREBASE_ONCE_TIMEOUT"); })(),
+  ]);
+}
+
+// Helper mới: Đọc an toàn, nếu timeout thì throw lỗi 504 rõ ràng
+async function safeRead(ref, timeoutMs = 5000) {
+  try {
+    return await onceWithTimeout(ref, timeoutMs);
+  } catch (e) {
+    if (e.message === "FIREBASE_ONCE_TIMEOUT") {
+      const err = new Error("Database timeout (read). Vui lòng thử lại.");
+      err.statusCode = 504;
+      throw err;
+    }
+    throw e;
+  }
+}
+
+/*
 async function waitAck(lockerId, cmdId, timeoutMs =30000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -341,6 +363,29 @@ async function waitAck(lockerId, cmdId, timeoutMs =30000) {
 
     if (ack && ack.commandId === cmdId) return ack;
     await new Promise(r => setTimeout(r, 500));
+  }
+  return null;
+}
+*/
+async function waitAck(lockerId, cmdId, timeoutMs = 15000) {
+  const ref = lockerRefById(lockerId).child("lastAck");
+  const t0 = Date.now();
+
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const snap = await onceWithTimeout(ref, 2500); // <-- QUAN TRỌNG
+      const ack = snap.val();
+
+      if (ack && (ack.commandId === cmdId || ack.id === cmdId)) return ack;
+    } catch (e) {
+      if (e.message === "FIREBASE_ONCE_TIMEOUT") {
+        // Log nhẹ rồi continue để retry
+        // console.log(`[waitAck] timeout checking ${lockerId}, retrying...`);
+      } else {
+        console.error("[waitAck] Unexpected error:", e);
+      }
+    }
+    await sleep(300);
   }
   return null;
 }
@@ -365,7 +410,8 @@ function isLockerOffline(locker, now = Date.now()) {
 
 async function assertLockerOnline(lockerId) {
   const ref = lockerRefById(lockerId);
-  const locker = (await ref.once("value")).val() || {};
+  // Thay thế .once("value") thường bằng safeRead để tránh treo
+  const locker = (await safeRead(ref, 5000)).val() || {};
   const now = Date.now();
 
   if (isLockerOffline(locker, now)) {
@@ -422,7 +468,7 @@ async function finalizeInUse(reservationId, r, lockerId, locker, now) {
   if (hasItem === null) {
     const updates = {};
     updates[`/Lockers/${lockerId}/status`] = "needs_admin";
-    updates[`/Lockers/${lockerId}/last_update`] = now;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
     updates[`/Reservations/${reservationId}/needAdminPickup`] = true;
     updates[`/Reservations/${reservationId}/needAdminPickupAt`] = now;
@@ -456,7 +502,7 @@ async function finalizeInUse(reservationId, r, lockerId, locker, now) {
 
       updates[`/Lockers/${lockerId}/status`] = "loaded";
       updates[`/Lockers/${lockerId}/command`] = null;
-      updates[`/Lockers/${lockerId}/last_update`] = now;
+      updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
       await db.ref().update(updates);
 
@@ -480,7 +526,7 @@ async function finalizeInUse(reservationId, r, lockerId, locker, now) {
     updates[`/Lockers/${lockerId}/reservationId`] = null;
     updates[`/Lockers/${lockerId}/reservedBy`] = null;
     updates[`/Lockers/${lockerId}/command`] = null;
-    updates[`/Lockers/${lockerId}/last_update`] = now;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
     await db.ref().update(updates);
 
@@ -507,7 +553,7 @@ async function finalizeInUse(reservationId, r, lockerId, locker, now) {
       updates[`/Lockers/${lockerId}/reservationId`] = null;
       updates[`/Lockers/${lockerId}/reservedBy`] = null;
       updates[`/Lockers/${lockerId}/command`] = null;
-      updates[`/Lockers/${lockerId}/last_update`] = now;
+      updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
       await db.ref().update(updates);
 
@@ -529,7 +575,7 @@ async function finalizeInUse(reservationId, r, lockerId, locker, now) {
 
     updates[`/Lockers/${lockerId}/status`] = "loaded";
     updates[`/Lockers/${lockerId}/command`] = null;
-    updates[`/Lockers/${lockerId}/last_update`] = now;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
     await db.ref().update(updates);
 
@@ -544,7 +590,7 @@ async function finalizeInUse(reservationId, r, lockerId, locker, now) {
   }
 
   // inUseBy lạ -> needs_admin
-  await db.ref(`/Lockers/${lockerId}`).update({ status: "needs_admin", last_update: now });
+  await db.ref(`/Lockers/${lockerId}`).update({ status: "needs_admin", last_server_update: now });
   await db.ref(`/Reservations/${reservationId}`).update({
     needAdminPickup: true,
     needAdminPickupAt: now,
@@ -567,6 +613,11 @@ async function watchdogInUse() {
     try {
       const inUseAt = Number(r?.inUseAt || 0);
       if (!inUseAt || (now - inUseAt < IN_USE_TIMEOUT_MS)) continue;
+
+      // --- CHẶN TRÙNG LẶP ---
+      // Nếu đơn này đã được đánh dấu lỗi và chờ Admin rồi, thì Watchdog không xử lý lại nữa
+      if (r.needAdminPickup === true) continue;
+      // ----------------------
 
       const lockerId = String(r?.lockerId || "").trim().toUpperCase();
       if (!lockerId) continue;
@@ -607,27 +658,25 @@ async function watchdogInUse() {
 
       if (!ack) {
         await cleanupCommandIfMatch(lockerRef, cmdId);
-        await db.ref("/Logs").push().set({
-          locker: lockerId,
-          action: "watchdog_close_timeout",
-          timestamp: Date.now(),
+        await markNeedsAdmin(
+          lockerId,
           reservationId,
-          result: "failed",
-          cmdId
-        });
+          "watchdog_close_timeout_inuse",
+          "JAM_CLOSE",
+          { note: "Watchdog: Đóng tủ tự động thất bại (Timeout)", meta: { cmdId, by: "watchdog" } }
+        );
         continue;
       }
 
       if (ack.status === "FAILED") {
         await cleanupCommandIfMatch(lockerRef, cmdId);
-        await db.ref("/Logs").push().set({
-          locker: lockerId,
-          action: "watchdog_close_failed",
-          timestamp: Date.now(),
+        await markNeedsAdmin(
+          lockerId,
           reservationId,
-          result: "failed",
-          cmdId
-        });
+          "watchdog_close_hardware_failed",
+          "JAM_CLOSE",
+          { note: "Watchdog: ESP32 báo lỗi khi thực hiện lệnh CLOSE tự động", meta: { cmdId, by: "watchdog" } }
+        );
         continue;
       }
 
@@ -642,13 +691,145 @@ async function watchdogInUse() {
   }
 }
 
-cron.schedule("*/10 * * * * *", async () => { //10s thay vi 1 phut
+cron.schedule("* * * * * *", async () => { // 1 phut
   try {
     await watchdogInUse();
   } catch (e) {
     console.error("[cron] watchdogInUse error:", e);
   }
 });
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function getLockerLastUpdateMs(locker) {
+  // bạn có thể đang dùng last_update, lastUpdate, updatedAt... nên ưu tiên lần lượt
+  const v = locker?.lastSensorAt ?? locker?.telemetryAt ?? 0;
+  return Number(v) || 0;
+}
+
+function isSensorStale(locker, now, staleMs = 30000) {//ve sau doi thanh 5s
+  const last = getLockerLastUpdateMs(locker);
+  return !last || (now - last > staleMs);
+}
+
+// tuỳ bạn đang lưu doorState kiểu gì, mình hỗ trợ vài dạng phổ biến
+function isDoorOpened(locker) {
+  const s = String(locker?.doorState ?? locker?.door ?? "").trim().toLowerCase();
+  if (!s) return null;           // không có field thì trả null (không check)
+  return (s === "opened" || s === "open");
+}
+
+function isDoorClosed(locker) {
+  const s = String(locker?.doorState ?? locker?.door ?? "").trim().toLowerCase();
+  if (!s) return null;
+  return (s === "closed" || s === "close");
+}
+
+
+async function waitLockerVerify(lockerId, predicate, opts = {}) {
+  const { timeoutMs = 6000, intervalMs = 250 } = opts;
+  const ref = db.ref(`/Lockers/${lockerId}`);
+  const end = Date.now() + timeoutMs;
+
+  while (Date.now() < end) {
+    try {
+      const snap = await onceWithTimeout(ref, 2500); // <-- QUAN TRỌNG
+      const locker = snap.val() || {};
+
+      if (predicate(locker)) return locker;
+    } catch (e) {
+      if (e.message !== "FIREBASE_ONCE_TIMEOUT") {
+        console.error("[waitLockerVerify] error:", e);
+      }
+    }
+    await sleep(intervalMs);
+  }
+  return null;
+}
+
+/*
+// poll đọc locker tới khi sensor fresh + predicate đúng
+async function waitLockerVerify(lockerId, predicate, opts = {}) {
+  const {
+    timeoutMs = 4000,
+    intervalMs = 250,
+    staleMs = 5000,
+  } = opts;
+
+  const ref = db.ref(`/Lockers/${lockerId}`);
+  const end = Date.now() + timeoutMs;
+
+  while (Date.now() < end) {
+    const locker = (await ref.once("value")).val() || {};
+    const now = Date.now();
+
+    // nếu sensor stale thì skip vòng này (đợi vòng sau)
+    if (!isSensorStale(locker, now, staleMs)) {
+      if (predicate(locker)) return locker;
+    }
+
+    await sleep(intervalMs);
+  }
+  return null;
+}
+*/
+//incident
+async function ensureIncident(lockerId, type, reservationId = "", payload = {}) {
+  const snap = await db.ref("/Incidents")
+    .orderByChild("lockerId")
+    .equalTo(lockerId)
+    .once("value");
+
+  const obj = snap.val() || {};
+  const existed = Object.entries(obj).find(([_, x]) =>
+    x?.type === type && x?.status === "open"
+  );
+
+  if (existed) return existed[0];
+
+  const ref = db.ref("/Incidents").push();
+  const incidentId = ref.key;
+
+  await ref.set({
+    type,
+    lockerId,
+    reservationId,
+    status: "open",
+    createdAt: Date.now(),
+    resolvedAt: 0,
+    note: payload.note || "",
+    meta: payload.meta || {}
+  });
+
+  return incidentId;
+}
+
+// Global Helper: Chạy promise với timeout, nếu timeout thì throw
+const withTimeout = (promise, ms, name) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(`${name}_TIMEOUT`)), ms))
+]);
+
+async function markNeedsAdmin(lockerId, reservationId, reason, incidentType, incidentPayload = {}) {
+  const incidentId = await ensureIncident(lockerId, incidentType, reservationId, incidentPayload);
+
+  const now = Date.now();
+  const updates = {};
+  updates[`/Lockers/${lockerId}/status`] = "needs_admin";
+  updates[`/Lockers/${lockerId}/last_server_update`] = now;
+  updates[`/Lockers/${lockerId}/command`] = null;
+
+  if (reservationId) {
+    updates[`/Reservations/${reservationId}/needAdminPickup`] = true;
+    updates[`/Reservations/${reservationId}/needAdminPickupAt`] = now;
+    updates[`/Reservations/${reservationId}/adminPickupReason`] = reason;
+    updates[`/Reservations/${reservationId}/incidentId`] = incidentId; // optional
+  }
+
+  await db.ref().update(updates);
+  return incidentId;
+}
+
 
 
 // =======================
@@ -659,11 +840,11 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(cookieParser());
 // cookie-parser: xử lý cookie
-const PORT = process.env.PORT ||3000;
+const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "bimatnho";
 
 // nhớ đổi khi lên production
- //process.env.JWT_SECRET: lấy giá trị từ biến môi trường JWT_SECRET.
+//process.env.JWT_SECRET: lấy giá trị từ biến môi trường JWT_SECRET.
 //Nếu không có (vd: quên set, hoặc đang dev lười tạo .env), thì dùng tạm "bimatnho" cho khỏi crash.
 const isProduction = process.env.NODE_ENV === "production";
 // production là true nếu NODE_ENV là "production", ngược lại là false.
@@ -671,7 +852,7 @@ const isProduction = process.env.NODE_ENV === "production";
 // Phone Auth Configuration
 // =======================
 const OTP_EXPIRY_MINUTES = 1;
-//const RESERVATION_EXPIRY_HOURS = 24 * 3;
+const RESERVATION_EXPIRY_HOURS = 24 * 3;
 const PICKUP_OTP_MAX_ATTEMPTS = 5;     // tối đa 5 lần sai
 const PICKUP_OTP_LOCK_MINUTES = 5;    // khoá 5 phút
 const OTP_SEND_COOLDOWN_SECONDS = 30;
@@ -735,7 +916,7 @@ app.get("/api/admin/reservations-all", authenticateToken, requireAdmin, async (r
 
     const snap = await db.ref("/Reservations").once("value");
     const data = snap.val() || {};
-//Đoạn này là JS/TS để biến đổi data (object) thành một mảng reservations rồi sắp xếp theo thời gian tạo mới nhất trước.
+    //Đoạn này là JS/TS để biến đổi data (object) thành một mảng reservations rồi sắp xếp theo thời gian tạo mới nhất trước.
     const reservations = Object.entries(data)
       .map(([id, r]) => ({
         id,
@@ -804,18 +985,18 @@ app.post("/api/auth/send-otp", async (req, res) => {
     return res.status(400).json({ error: "Invalid phone number format" });
   }
   const lastSnap = await db.ref("/OTPs")
-  .orderByChild("phoneNumber")
-  .equalTo(phoneNumber)
-  .limitToLast(1)
-  .once("value");
+    .orderByChild("phoneNumber")
+    .equalTo(phoneNumber)
+    .limitToLast(1)
+    .once("value");
 
-const last = lastSnap.val();
-if (last) {
-  const [lastId, lastOtp] = Object.entries(last)[0];
-  if (lastOtp?.createdAt && (Date.now() - lastOtp.createdAt) < OTP_SEND_COOLDOWN_SECONDS * 1000) {
-    return res.status(429).json({ error: "Bạn thao tác quá nhanh, vui lòng thử lại sau 30s" });
+  const last = lastSnap.val();
+  if (last) {
+    const [lastId, lastOtp] = Object.entries(last)[0];
+    if (lastOtp?.createdAt && (Date.now() - lastOtp.createdAt) < OTP_SEND_COOLDOWN_SECONDS * 1000) {
+      return res.status(429).json({ error: "Bạn thao tác quá nhanh, vui lòng thử lại sau 30s" });
+    }
   }
-}
 
 
   try {
@@ -823,20 +1004,20 @@ if (last) {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationId = uuidv4();
     const expiresAt = Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000;
-    
-// Store OTP in Firebase
+
+    // Store OTP in Firebase
     await db.ref(`/OTPs/${verificationId}`).set({
       phoneNumber: phoneNumber,
       otpCode: otpCode,
       expiresAt: expiresAt,
       createdAt: Date.now(),
       attempts: 0,
-  lockedUntil: 0
+      lockedUntil: 0
     });
 
     // In production, send SMS here
     //console.log(...) bạn viết trong backend/server (Node/Express/Firebase Functions, v.v.) thì khi deploy, log đó chỉ xuất hiện ở log của server (terminal lúc chạy local, hoặc Cloud Logs / Railway / Render / Vercel logs…).
- //User bấm F12 chỉ thấy console.log chạy trong trình duyệt (frontend). Trình duyệt không thấy log từ server.
+    //User bấm F12 chỉ thấy console.log chạy trong trình duyệt (frontend). Trình duyệt không thấy log từ server.
     console.log(`📱 OTP for ${phoneNumber}: ${otpCode}`);
     console.log(`🔑 Verification ID: ${verificationId}`);
     console.log(
@@ -850,11 +1031,11 @@ if (last) {
       expiresAt: expiresAt,
     };
     //Chỉ trả otpCode khi KHÔNG phải production (dev, test)
-if (!isProduction) {
-  responseData.otpCode = otpCode;
-}
+    if (!isProduction) {
+      responseData.otpCode = otpCode;
+    }
 
-return res.json(responseData);
+    return res.json(responseData);
   } catch (error) {
     console.error("Error sending OTP:", error);
     return res.status(500).json({ error: "Failed to send OTP" });
@@ -876,32 +1057,32 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     const otpSnapshot = await db.ref(`/OTPs/${verificationId}`).once("value");
     const otpData = otpSnapshot.val();
     // bị khoá tạm
-if (otpData.lockedUntil && Date.now() < otpData.lockedUntil) {
-  return res.status(429).json({ error: "Bạn nhập sai quá nhiều lần, vui lòng thử lại sau 3 phút" });
-}
-if (!otpData) {
+    if (otpData.lockedUntil && Date.now() < otpData.lockedUntil) {
+      return res.status(429).json({ error: "Bạn nhập sai quá nhiều lần, vui lòng thử lại sau 3 phút" });
+    }
+    if (!otpData) {
       return res
         .status(400)
         .json({ error: "Verification ID không hợp lệ" });
     }
- // 2. Kiểm tra hết hạn
+    // 2. Kiểm tra hết hạn
     if (Date.now() > otpData.expiresAt) {
       return res.status(400).json({ error: "OTP đã hết hạn" });
     }
- // 3. Kiểm tra mã OTP
+    // 3. Kiểm tra mã OTP
     if (otpData.otpCode !== otpCode) {
       const attempts = (otpData.attempts || 0) + 1;
-    
+
       const update = { attempts };
       if (attempts >= OTP_MAX_ATTEMPTS) {
         update.lockedUntil = Date.now() + OTP_LOCK_MINUTES * 60 * 1000;
       }
-    
+
       await db.ref(`/OTPs/${verificationId}`).update(update);
-    
+
       return res.status(400).json({ error: "Mã OTP không đúng" });
     }
-     // 4. Lấy thông tin user từ /Users
+    // 4. Lấy thông tin user từ /Users
     const phoneNumber = otpData.phoneNumber;
     const userRef = db.ref(`/Users/${phoneNumber}`);
     const userSnapshot = await userRef.once("value");
@@ -913,7 +1094,7 @@ if (!otpData) {
         error: "Số điện thoại này chưa đăng ký tài khoản",
       });
     }
- // 5. Cập nhật lastLogin
+    // 5. Cập nhật lastLogin
     const now = Date.now();
     await userRef.update({ lastLogin: now });
 
@@ -928,16 +1109,16 @@ if (!otpData) {
     );
 
     // 7.1. Set cookie
-const cookieOptions = {
-  httpOnly: true,  //Cookie không đọc được bằng JS ở trình duyệt (không document.cookie được).Giúp giảm rủi ro bị ăn cắp cookie nếu XSS.
-  sameSite: "lax",//Hạn chế cookie bị gửi trong các request “cross-site” (giảm CSRF).
-  secure: isProduction,//true thì cookie chỉ gửi qua HTTPS.
-  maxAge: 7 * 24 * 60 * 60 * 1000,// 7ngay
-};
+    const cookieOptions = {
+      httpOnly: true,  //Cookie không đọc được bằng JS ở trình duyệt (không document.cookie được).Giúp giảm rủi ro bị ăn cắp cookie nếu XSS.
+      sameSite: "lax",//Hạn chế cookie bị gửi trong các request “cross-site” (giảm CSRF).
+      secure: isProduction,//true thì cookie chỉ gửi qua HTTPS.
+      maxAge: 7 * 24 * 60 * 60 * 1000,// 7ngay
+    };
 
-res.cookie("authToken", token, cookieOptions);
+    res.cookie("authToken", token, cookieOptions);
 
-// 8. Xoá OTP vì đã dùng xong
+    // 8. Xoá OTP vì đã dùng xong
     await db.ref(`/OTPs/${verificationId}`).remove();
 
     // 9. Trả kết quả cho frontend
@@ -947,12 +1128,12 @@ res.cookie("authToken", token, cookieOptions);
       role: role,
       user: { ...userData, lastLogin: now, role },
     };
-    
+
     // Dev thì vẫn trả token cho tiện debug, production thì không
     if (!isProduction) {
       responseData.token = token;
     }
-    
+
     res.json(responseData);
   } catch (error) {
     console.error("Error verifying OTP:", error);
@@ -971,43 +1152,43 @@ app.post("/api/auth/register", async (req, res) => {
   }
 
   try {
-     // 1. Lấy OTP từ Firebase
-      const otpSnapshot = await db.ref(`/OTPs/${verificationId}`).once("value");
-      const otpData = otpSnapshot.val();
-      // bị khoá tạm
-  if (otpData.lockedUntil && Date.now() < otpData.lockedUntil) {
-    return res.status(429).json({ error: "Bạn nhập sai quá nhiều lần, vui lòng thử lại sau 3 phút" });
-  }
-  
-      if (!otpData) {
-        return res
-          .status(400)
-          .json({ error: "Verification ID không hợp lệ" });
+    // 1. Lấy OTP từ Firebase
+    const otpSnapshot = await db.ref(`/OTPs/${verificationId}`).once("value");
+    const otpData = otpSnapshot.val();
+    // bị khoá tạm
+    if (otpData.lockedUntil && Date.now() < otpData.lockedUntil) {
+      return res.status(429).json({ error: "Bạn nhập sai quá nhiều lần, vui lòng thử lại sau 3 phút" });
+    }
+
+    if (!otpData) {
+      return res
+        .status(400)
+        .json({ error: "Verification ID không hợp lệ" });
+    }
+    // 2. Kiểm tra hết hạn
+    if (Date.now() > otpData.expiresAt) {
+      return res.status(400).json({ error: "OTP đã hết hạn" });
+    }
+    // 3. Kiểm tra mã OTP
+    if (otpData.otpCode !== otpCode) {
+      const attempts = (otpData.attempts || 0) + 1;
+
+      const update = { attempts };
+      if (attempts >= OTP_MAX_ATTEMPTS) {
+        update.lockedUntil = Date.now() + OTP_LOCK_MINUTES * 60 * 1000;
       }
-  // 2. Kiểm tra hết hạn
-      if (Date.now() > otpData.expiresAt) {
-        return res.status(400).json({ error: "OTP đã hết hạn" });
-      }
-  // 3. Kiểm tra mã OTP
-      if (otpData.otpCode !== otpCode) {
-        const attempts = (otpData.attempts || 0) + 1;
-      
-        const update = { attempts };
-        if (attempts >= OTP_MAX_ATTEMPTS) {
-          update.lockedUntil = Date.now() + OTP_LOCK_MINUTES * 60 * 1000;
-        }
-      
-        await db.ref(`/OTPs/${verificationId}`).update(update);
-      
-        return res.status(400).json({ error: "Mã OTP không đúng" });
-      }
+
+      await db.ref(`/OTPs/${verificationId}`).update(update);
+
+      return res.status(400).json({ error: "Mã OTP không đúng" });
+    }
     // Check if user already exists
     const userRef = db.ref(`/Users/${phoneNumber}`);
     const userSnapshot = await userRef.once("value");
     if (userSnapshot.exists()) {
       return res.status(400).json({ error: "User already exists" });
     }
-// Xác định role theo số điện thoại
+    // Xác định role theo số điện thoại
     const userRole = getRoleForPhone(phoneNumber);
 
     // Create user
@@ -1030,14 +1211,14 @@ app.post("/api/auth/register", async (req, res) => {
     );
 
     // Set cookie chứa token
-const cookieOptions = {
-  httpOnly: true,                 // JS không đọc được
-  sameSite: "lax",                // tránh CSRF cơ bản
-  secure: isProduction,           // chỉ dùng HTTPS ở production
-  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 ngày
-};
+    const cookieOptions = {
+      httpOnly: true,                 // JS không đọc được
+      sameSite: "lax",                // tránh CSRF cơ bản
+      secure: isProduction,           // chỉ dùng HTTPS ở production
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 ngày
+    };
 
-res.cookie("authToken", token, cookieOptions);
+    res.cookie("authToken", token, cookieOptions);
 
     // Clean up OTP
     await db.ref(`/OTPs/${verificationId}`).remove();
@@ -1046,12 +1227,12 @@ res.cookie("authToken", token, cookieOptions);
       success: true,
       user: userData,
     };
-    
+
     // Dev thì vẫn trả token cho tiện debug, production thì không
     if (!isProduction) {
       responseData.token = token;
     }
-    
+
     res.json(responseData);
   } catch (error) {
     console.error("Error registering user:", error);
@@ -1081,12 +1262,12 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
       error: "Hiện chưa cấu hình tủ nào cho kích thước này"
     });
   }
-// chuẩn bị dữ liệu reservation trước
+  // chuẩn bị dữ liệu reservation trước
   const now = Date.now();
   const reservationId = uuidv4();
   const bookingCode = Math.floor(100000 + Math.random() * 900000).toString();
- //const expiresAt = now + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000);
- const expiresAt = now + 600 * 1000; // 10 giây
+  const expiresAt = now + (RESERVATION_EXPIRY_HOURS * 60 * 60 * 1000);
+  // const expiresAt = now + 60 * 1000; // 1 PHÚT
 
 
   let lockerId = null;
@@ -1094,6 +1275,14 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
   try {
     // ✅ Transaction: thử claim lần lượt các tủ trong candidate
     for (const id of candidateLockers) {
+      // Bổ sung check online trước khi claim
+      const lockerSnap = await db.ref(`/Lockers/${id}`).once("value");
+      const lk = lockerSnap.val() || {};
+      if (isLockerOffline(lk, Date.now())) {
+        console.warn(`Locker ${id} is offline, skipping reservation candidate.`);
+        continue;
+      }
+
       const ok = await claimLocker(id, reservationId, receiverPhone);
       if (ok) {
         lockerId = id;
@@ -1108,9 +1297,9 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
       });
     }
 
-      // ✅ Chuẩn hoá lockerId + tạo bookingKey
-      lockerId = String(lockerId).trim().toUpperCase();
-      const bookingKey = `${lockerId}_${bookingCode}`; // ví dụ: L2_327977
+    // ✅ Chuẩn hoá lockerId + tạo bookingKey
+    lockerId = String(lockerId).trim().toUpperCase();
+    const bookingKey = `${lockerId}_${bookingCode}`; // ví dụ: L2_327977
     // ✅ Ghi reservation sau khi claim thành công
     await db.ref(`/Reservations/${reservationId}`).set({
       receiverPhone,
@@ -1124,12 +1313,12 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
       expiresAt
     });
 
-   
+
 
     // (tuỳ chọn) update lại locker cho đủ field (không bắt buộc vì claimLocker đã set booked)
     await db.ref(`/Lockers/${lockerId}`).update({
       status: "booked",
-      last_update: Date.now(),
+      last_server_update: Date.now(),
       reservationId,
       reservedBy: receiverPhone
     });
@@ -1140,7 +1329,7 @@ app.post("/api/user/reserve-locker", authenticateToken, async (req, res) => {
       lockerId,
       lockerSize: size,
       bookingCode,
-      bookingKey,   
+      bookingKey,
       expiresAt
     });
   } catch (err) {
@@ -1269,12 +1458,14 @@ app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) =>
   if (!reservationId || !otpCode) {
     return res.status(400).json({ error: "Thiếu thông tin xác thực" });
   }
-    
+  console.log(`[DEBUG] verify-and-open called. ResId: ${reservationId}, Phone: ${phoneNumber}`);
+
 
   try {
     // 1. Lấy dữ liệu Reservation & Kiểm tra tồn tại
     const reservationRef = db.ref("/Reservations").child(reservationId);
-    const cur = (await reservationRef.once("value")).val();
+    // Dùng safeRead thay vì once thường
+    const cur = (await safeRead(reservationRef, 5000)).val();
 
     if (!cur) return res.status(404).json({ error: "Không tìm thấy đơn đặt tủ" });
 
@@ -1296,6 +1487,7 @@ app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) =>
     if (cur.otpLockedUntil && now < cur.otpLockedUntil) {
       return res.status(429).json({ error: "Thử lại quá nhiều lần, vui lòng đợi." });
     }
+    console.log("[DEBUG] Steps 1-4 OK. Verifying OTP...");
 
     // 5. Xác thực OTP
     const storedOtp = String(cur.pickupOtp || cur.otpCode || "").trim();
@@ -1313,79 +1505,160 @@ app.post("/api/receiver/verify-and-open", authenticateToken, async (req, res) =>
 
     const lockerId = cur.lockerId;
     // Kiểm tra ESP32 còn sống không trước khi gửi lệnh
-    await assertLockerOnline(lockerId); 
+    console.log(`[DEBUG] LockerId: ${lockerId}. Checking status...`);
+    await assertLockerOnline(lockerId);
+    console.log("[DEBUG] Locker is Online. Sending command...");
 
     const cmdId = makeCommandId(); // Tạo ID lệnh duy nhất
     const action = "open";
 
     // Ghi lệnh xuống Firebase với trạng thái PENDING
     const lockerRef = lockerRefById(lockerId);
-   /* await lockerRef.update({
-      command: {
-        id: cmdId,
-        action: action,
-        status: "PENDING",
-        issuedAt: now,
-        reservationId: reservationId
-      }
-    });*/
+    /* await lockerRef.update({
+       command: {
+         id: cmdId,
+         action: action,
+         status: "PENDING",
+         issuedAt: now,
+         reservationId: reservationId
+       }
+     });*/
 
     // Thay vì dùng .update, hãy dùng transaction cho lệnh
-const result = await lockerRef.child("command").transaction((current) => {
-  if (current && current.status === "PENDING") {
-    return; // Trả về undefined để hủy transaction vì đang có lệnh chờ xử lý
-  }
-  return {
-    id: cmdId,
-    action: "open",
-    status: "PENDING",
-    issuedAt: Date.now(),
-    reservationId: reservationId
-  };
-});
+    const result = await lockerRef.child("command").transaction((current) => {
+      if (current && current.status === "PENDING") {
+        return; // Trả về undefined để hủy transaction vì đang có lệnh chờ xử lý
+      }
+      return {
+        id: cmdId,
+        action: "open",
+        status: "PENDING",
+        issuedAt: Date.now(),
+        reservationId: reservationId
+      };
+    });
 
-if (!result.committed) {
-  return res.status(409).json({ error: "Hệ thống đang thực hiện lệnh trước đó, vui lòng đợi." });
-}
+    if (!result.committed) {
+      return res.status(409).json({ error: "Hệ thống đang thực hiện lệnh trước đó, vui lòng đợi." });
+    }
 
     // 6. Đợi ESP32 phản hồi (waitAck) - Giải quyết vấn đề mất mạng
     // Hàm này sẽ poll Firebase mỗi 500ms để tìm lastAck khớp với cmdId
+    console.log(`[DEBUG] Waiting ACK for cmdId: ${cmdId}...`);
     const ack = await waitAck(lockerId, cmdId); // Chờ tối đa 12 giây
+    console.log(`[DEBUG] ACK Result:`, ack);
 
-   
+
 
     if (!ack) {
       await cleanupCommandIfMatch(lockerRef, cmdId);
       return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
     }
-    
+
     if (ack.status === "FAILED") {
       await cleanupCommandIfMatch(lockerRef, cmdId);
       return res.status(500).json({ error: "Tủ báo lỗi vật lý khi mở khóa." });
     }
-    
-    // ACK OK -> dọn command luôn cho sạch
-    await cleanupCommandIfMatch(lockerRef, cmdId);
-    
 
-    // 7. Cập nhật kết quả cuối cùng sau khi ESP32 đã Ack thành công
+    // Helper: Chạy promise với timeout, nếu timeout thì throw
+    const withTimeout = (promise, ms, name) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`${name}_TIMEOUT`)), ms))
+    ]);
+
+    // Cleanup: cho phép tối đa 3s, nếu lỗi thì bỏ qua (log warning) để không block flow
+    console.log("[DEBUG] Cleaning up command...");
+    try {
+      await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP");
+    } catch (e) {
+      console.warn("[DEBUG] Cleanup slow/failed:", e.message);
+    }
+
+    // đọc lại locker mới nhất
+    console.log("[DEBUG] Reading final locker state...");
+    const afterSnap = await safeRead(lockerRef, 5000);
+    const after = afterSnap.val() || {};
+
+    // 0) nếu sensor stale thì đợi verify
+    const now1 = Date.now();
+    if (isSensorStale(after, now1, 5000)) {
+      console.log("[DEBUG] Sensor stale, verifying...");
+      const verifiedOpen = await waitLockerVerify(
+        lockerId,
+        (lk) => {
+          const opened = isDoorOpened(lk);
+          return opened === null ? true : opened === true;
+        },
+        { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+      );
+
+      if (!verifiedOpen) {
+        const incidentId = await markNeedsAdmin(
+          lockerId,
+          reservationId,
+          "open_ack_ok_but_st_happened",
+          "JAM_OPEN",
+          { note: "ACK OK nhưng không thấy doorState=open", meta: { cmdId, by: "receiver" } }
+        );
+
+        await db.ref("/Logs").push().set({
+          phone: phoneNumber || "shipper/admin",
+          locker: lockerId,
+          action: "open_verify_failed_after_ack",
+          timestamp: Date.now(),
+          result: "failed",
+          reservationId,
+          cmdId,
+          incidentId
+        });
+
+        return res.status(409).json({
+          error: "ACK OK nhưng không xác minh được cửa đã mở (kẹt hoặc sensor trễ). Admin sẽ xử lý.",
+          incidentId
+        });
+      }
+    } else {
+      // logic verify nhanh
+      const opened = isDoorOpened(after);
+      if (opened === false) {
+        console.log("[DEBUG] Door closed after open. Mark needs admin.");
+        const u = {};
+        u[`/Lockers/${lockerId}/status`] = "needs_admin";
+        u[`/Lockers/${lockerId}/last_server_update`] = Date.now();
+        u[`/Reservations/${reservationId}/needAdminPickup`] = true;
+        u[`/Reservations/${reservationId}/needAdminPickupAt`] = Date.now();
+        u[`/Reservations/${reservationId}/adminPickupReason`] = "open_ack_ok_but_door_not_open";
+
+        await db.ref().update(u).catch(console.error);
+
+        return res.status(409).json({ error: "Tủ báo mở nhưng cửa chưa mở (kẹt)." });
+      }
+    }
+
+    // 7. Cập nhật kết quả cuối cùng
+    console.log("[DEBUG] Finalizing reservation update...");
     const updates = {};
     updates[`/Reservations/${reservationId}/openedAt`] = now;
     updates[`/Reservations/${reservationId}/otpAttempts`] = 0;
-    
+
     updates[`/Reservations/${reservationId}/status`] = "in_use";
     updates[`/Reservations/${reservationId}/inUseAt`] = now;
-    updates[`/Reservations/${reservationId}/inUseBy`] = "receiver"; // hoặc "user"
-    
+    updates[`/Reservations/${reservationId}/inUseBy`] = "receiver";
+
     updates[`/Lockers/${lockerId}/status`] = "in_use";
-    updates[`/Lockers/${lockerId}/reservationId`] = reservationId; // rất nên giữ
+    updates[`/Lockers/${lockerId}/reservationId`] = reservationId;
     updates[`/Lockers/${lockerId}/command`] = null;
-    updates[`/Lockers/${lockerId}/last_update`] = now;
-    
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
-    await db.ref().update(updates);
+    // Wrapper cho update cuối cùng
+    try {
+      await withTimeout(db.ref().update(updates), 5000, "FINAL_UPDATE");
+      console.log("[DEBUG] Final update success.");
+    } catch (e) {
+      console.error("[DEBUG] Final update timed out/failed:", e);
+      return res.status(504).json({ error: "Tủ đã mở nhưng Server không cập nhật được trạng thái (Database Timeout). Vui lòng refresh." });
+    }
 
-    // 8. Log hành động
     await db.ref("/Logs").push().set({
       phone: phoneNumber,
       locker: lockerId,
@@ -1399,13 +1672,13 @@ if (!result.committed) {
       success: true,
       message: "Mở tủ thành công, mời bạn lấy đồ.",
       lockerId,
-  reservationId
+      reservationId
     });
 
   } catch (error) {
     console.error("[verify-and-open] Error:", error);
-    return res.status(error.statusCode || 500).json({ 
-      error: error.message || "Lỗi xử lý yêu cầu" 
+    return res.status(error.statusCode || 500).json({
+      error: error.message || "Lỗi xử lý yêu cầu"
     });
   }
 });
@@ -1446,7 +1719,8 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
 
     // 3. Kiểm tra trạng thái vật lý của tủ (Sensor) và Online
     const lockerRef = lockerRefById(lockerId);
-    const lockerSnap = await lockerRef.once("value");
+    // Thay once("value") bằng safeRead để tránh treo
+    const lockerSnap = await safeRead(lockerRef, 5000);
     const locker = lockerSnap.val() || {};
 
     // Check online
@@ -1464,7 +1738,7 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
 
     const result = await lockerRef.child("command").transaction((current) => {
       // Nếu đang có lệnh PENDING, không cho gửi thêm lệnh mới
-      if (current && current.status === "PENDING") return; 
+      if (current && current.status === "PENDING") return;
 
       return {
         id: cmdId,
@@ -1481,39 +1755,97 @@ app.post("/api/shipper/use-reservation", async (req, res) => {
     }
 
     // 4. Đợi phản hồi từ ESP32 (waitAck)
-    const ack = await waitAck(lockerId, cmdId);
+    console.log(`[DEBUG] Shipper Open: Waiting ACK for cmdId: ${cmdId}...`);
+    const ack = await waitAck(lockerId, cmdId); // Default 12s
+    console.log(`[DEBUG] Shipper Open: ACK Result:`, ack);
 
     if (!ack) {
-      await cleanupCommandIfMatch(lockerRef, cmdId);
+      // await cleanupCommandIfMatch(lockerRef, cmdId);
+      try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 10000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
       return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
     }
-    
+
     if (ack.status === "FAILED") {
-      await cleanupCommandIfMatch(lockerRef, cmdId);
+      // await cleanupCommandIfMatch(lockerRef, cmdId);
+      try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 10000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
       return res.status(500).json({ error: "Tủ báo lỗi vật lý khi mở khóa." });
     }
-    
+
     // ACK OK -> dọn command luôn cho sạch
-    await cleanupCommandIfMatch(lockerRef, cmdId);
-    
+    // await cleanupCommandIfMatch(lockerRef, cmdId);
+    try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 10000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
+
+    // đọc lại locker mới nhất
+    console.log("[DEBUG] Shipper Open: Reading final locker state...");
+    const afterSnap = await safeRead(lockerRef, 5000);
+    const after = afterSnap.val() || {};
+
+    // nếu sensor stale thì đợi verify (tránh ACK xong nhưng sensor chưa kịp update)
+    const tVerify = Date.now();
+
+    let okOpen = true;
+
+    // nếu có door sensor thì bắt buộc cửa phải mở
+    const opened0 = isDoorOpened(after); // true/false/null
+    if (opened0 === false) okOpen = false;
+
+    // stale -> đợi sensor fresh + door open
+    if (!okOpen || isSensorStale(after, tVerify, 5000)) {
+      const verifiedOpen = await waitLockerVerify(
+        lockerId,
+        (lk) => {
+          const opened = isDoorOpened(lk);
+          // không có door sensor => opened=null => bỏ qua check
+          return opened === null ? true : opened === true;
+        },
+        { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+      );
+
+      if (!verifiedOpen) {
+        const incidentId = await markNeedsAdmin(
+          lockerId,
+          reservationId,
+          "open_ack_ok_but_door_not_open",
+          "JAM_OPEN",
+          { note: "ACK OK nhưng không thấy doorState=open", meta: { cmdId, by: "shipper" } }
+        );
+
+        await db.ref("/Logs").push().set({
+          phone: "shipper",
+          locker: lockerId,
+          action: "open_verify_failed_after_ack",
+          timestamp: Date.now(),
+          result: "failed",
+          reservationId,
+          cmdId,
+          incidentId
+        });
+
+        return res.status(409).json({
+          error: "ACK OK nhưng không xác minh được cửa đã mở (kẹt hoặc sensor trễ). Admin sẽ xử lý.",
+          incidentId
+        });
+      }
+    } // End if (!okOpen || stale)
+
     // 5. Thành công -> Update trạng thái đơn và Log
     // Lưu ý: Lúc này status đơn vẫn là "booked" hoặc chuyển sang "loading" 
     // Trạng thái "loaded" chỉ nên set khi ESP32 báo cửa đã ĐÓNG lại.
     const updates = {};
-  //  updates[`/Reservations/${reservationId}/status`] = "shipping"; // Đang trong quá trình bỏ hàng
+    //  updates[`/Reservations/${reservationId}/status`] = "shipping"; // Đang trong quá trình bỏ hàng
     updates[`/Reservations/${reservationId}/shipperOpenedAt`] = now;
     updates[`/Reservations/${reservationId}/status`] = "in_use";
 
-updates[`/Reservations/${reservationId}/inUseBy`] = "shipper"; // hoặc receiver/admin
+    updates[`/Reservations/${reservationId}/inUseBy`] = "shipper"; // hoặc receiver/admin
 
 
-updates[`/Lockers/${lockerId}/status`] = "in_use";
-updates[`/Reservations/${reservationId}/inUseAt`] = now;
-updates[`/Lockers/${lockerId}/reservationId`] = reservationId;
-updates[`/Lockers/${lockerId}/last_update`] = now;
+    updates[`/Lockers/${lockerId}/status`] = "in_use";
+    updates[`/Reservations/${reservationId}/inUseAt`] = now;
+    updates[`/Lockers/${lockerId}/reservationId`] = reservationId;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
 
-    
+
     await db.ref().update(updates);
 
     await db.ref("/Logs").push().set({
@@ -1526,11 +1858,10 @@ updates[`/Lockers/${lockerId}/last_update`] = now;
       bookingKey
     });
 
-    return res.json({ 
-      success: true, 
-      message: "Tủ đã mở. Vui lòng bỏ hàng và ĐÓNG CỬA để hoàn tất." 
+    return res.json({
+      success: true,
+      message: "Tủ đã mở. Bạn có 5 phút để bỏ hàng vào tủ. Sau đó bấm 'Đóng tủ & xác nhận đã bỏ hàng'."
     });
-
   } catch (err) {
     console.error("[shipper/use-reservation] Error:", err);
     return res.status(err.statusCode || 500).json({ error: err.message });
@@ -1538,149 +1869,192 @@ updates[`/Lockers/${lockerId}/last_update`] = now;
 });
 
 //11.ship đóng tủ
-  app.post("/api/shipper/confirm-loaded", async (req, res) => {
-    const codeStr = String(req.body?.bookingCode ?? "").trim();
-    const lockerId = String(req.body?.lockerId ?? "").trim().toUpperCase();
-  
-    if (!codeStr || !lockerId) {
-      return res.status(400).json({ error: "Thiếu Booking Code hoặc Locker ID" });
+app.post("/api/shipper/confirm-loaded", async (req, res) => {
+  const codeStr = String(req.body?.bookingCode ?? "").trim();
+  const lockerId = String(req.body?.lockerId ?? "").trim().toUpperCase();
+
+  if (!codeStr || !lockerId) {
+    return res.status(400).json({ error: "Thiếu Booking Code hoặc Locker ID" });
+  }
+
+  try {
+    const bookingKey = `${lockerId}_${codeStr}`;
+
+    // 1. Tìm Reservation (Chỉ đọc - Once)
+    const snap = await db.ref("/Reservations")
+      .orderByChild("bookingKey")
+      .equalTo(bookingKey)
+      .once("value");
+
+    const all = snap.val();
+    if (!all) return res.status(400).json({ error: "Mã đặt tủ không tồn tại." });
+
+    const [reservationId, cur] = Object.entries(all)
+      .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0))[0];
+
+    // 2. Kiểm tra Logic (Status & Expiry)
+    // if (cur.status !== "booked" && cur.status !== "shipping") {
+    if (cur.status !== "in_use") {
+      return res.status(400).json({ error: `Đơn đang ở trạng thái ${cur.status}, không thể xác nhận.` });
     }
-  
-    try {
-      const bookingKey = `${lockerId}_${codeStr}`;
-      
-      // 1. Tìm Reservation (Chỉ đọc - Once)
-      const snap = await db.ref("/Reservations")
-        .orderByChild("bookingKey")
-        .equalTo(bookingKey)
-        .once("value");
-  
-      const all = snap.val();
-      if (!all) return res.status(400).json({ error: "Mã đặt tủ không tồn tại." });
-  
-      const [reservationId, cur] = Object.entries(all)
-        .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0))[0];
-  
-      // 2. Kiểm tra Logic (Status & Expiry)
-     // if (cur.status !== "booked" && cur.status !== "shipping") {
-         if (cur.status !== "in_use" ) {
-        return res.status(400).json({ error: `Đơn đang ở trạng thái ${cur.status}, không thể xác nhận.` });
-      }
-      if (Date.now() > Number(cur.expiresAt)) {
-        return res.status(400).json({ error: "Đơn đặt tủ đã hết hạn." });
-      }
-  
-      // 3. Kiểm tra Sensor trước khi cho phép đóng (Nếu có cảm biến)
-      const lockerSnap = await db.ref(`/Lockers/${lockerId}`).once("value");
-      const locker = lockerSnap.val() || {};
-  
-      // Check Online
-      await assertLockerOnline(lockerId);
-  
-      // QUAN TRỌNG: Kiểm tra cảm biến hàng hóa (hasItem)
+    if (Date.now() > Number(cur.expiresAt)) {
+      return res.status(400).json({ error: "Đơn đặt tủ đã hết hạn." });
+    }
 
-      const hasItem = parseHasItem(locker.hasItem);
-      if (hasItem === false) {
-        return res.status(409).json({ 
-          error: "Chưa thấy hàng trong tủ." 
-        });
-      }
+    // 3. Kiểm tra Sensor trước khi cho phép đóng (Nếu có cảm biến)
+    // const lockerSnap = await db.ref(`/Lockers/${lockerId}`).once("value");
+    const lockerSnap = await safeRead(db.ref(`/Lockers/${lockerId}`), 5000);
+    const locker = lockerSnap.val() || {};
 
-      const doorState = String(locker.doorState || "").trim(); // nếu có
-      if (doorState && doorState !== "opened") {//tồn tại và khác opened
-        return res.status(409).json({
-          error: "Cửa chưa mở. Vui lòng mở cửa tủ trước khi xác nhận."
-        });
-      }
-  
-      // 4. Gửi lệnh ĐÓNG TỦ (CLOSE)
-      const cmdId = makeCommandId();
-      const now = Date.now();
-      const lockerRef = lockerRefById(lockerId);
-  
-  /*    // Ghi lệnh chờ đóng
-      await lockerRef.update({
-        command: {
-          id: cmdId,
-          action: "close",
-          status: "PENDING",
-          issuedAt: now,
-          reservationId: reservationId
-        }
-      });*/
+    // Check Online
+    await assertLockerOnline(lockerId);
 
-      //Transaction giúp bạn đảm bảo quy tắc quan trọng nhất: một locker chỉ có tối đa 1 command PENDING tại một thời điểm.
-      const tx = await lockerRef.child("command").transaction((current) => {
-        if (current && current.status === "PENDING") return; // đang bận
-        return {
-          id: cmdId,
-          action: "close",
-          status: "PENDING",
-          issuedAt: now,
-          reservationId,
-          by: "shipper_confirm_loaded"
-        };
+
+    // 3.0) Nếu sensor stale thì KHÔNG tin
+    const now0 = Date.now();
+    if (isSensorStale(locker, now0, 5000)) {
+      return res.status(409).json({
+        error: "Tủ đang cập nhật sensor chậm (stale). Vui lòng đợi vài giây rồi thử lại."
       });
-      
-      if (!tx.committed) {
-        return res.status(409).json({ error: "Tủ đang xử lý lệnh khác, vui lòng đợi vài giây." });
-      }
-  
-      // 5. Đợi ESP32 xác nhận đã đóng cửa thành công (waitAck)
-      const ack = await waitAck(lockerId, cmdId, 15000); // Đợi 15s cho shipper kịp đóng cửa
-      
+    }
 
-      if (!ack) {
-        await cleanupCommandIfMatch(lockerRef, cmdId);
-        return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
-      }
-      
-      if (ack.status === "FAILED") {
-        await cleanupCommandIfMatch(lockerRef, cmdId);
-        return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
-      }
-      
-      // ACK OK -> dọn command luôn cho sạch
-      await cleanupCommandIfMatch(lockerRef, cmdId);
-      
-  
-      // 6. Hoàn tất: Tạo OTP người nhận và Update toàn bộ trạng thái
-      const pickupOtp = Math.floor(100000 + Math.random() * 900000).toString();
-      
-      const updates = {};
-      // Cập nhật Reservation
-      updates[`/Reservations/${reservationId}/status`] = "loaded";
-      updates[`/Reservations/${reservationId}/loadedAt`] = now;
-      updates[`/Reservations/${reservationId}/pickupOtp`] = pickupOtp;
-      updates[`/Reservations/${reservationId}/otpCode`] = pickupOtp; // fallback
-  
-      // Cập nhật Locker
-      updates[`/Lockers/${lockerId}/status`] = "loaded"; // Đã có hàng bên trong
-      updates[`/Lockers/${lockerId}/command`] = null; // Dọn dẹp lệnh
-  
-      await db.ref().update(updates);
-  
-      // 7. Log
-      await db.ref("/Logs").push().set({
-        locker: lockerId,
-        action: "confirm_loaded_success_byshipper",
-        timestamp: now,
+    // QUAN TRỌNG: Kiểm tra cảm biến hàng hóa (hasItem)
+
+    const hasItem = parseHasItem(locker.hasItem);
+    if (hasItem === false) {
+      return res.status(409).json({
+        error: "Chưa thấy hàng trong tủ."
+      });
+    }
+
+    const doorState = String(locker.doorState || "").trim(); // nếu có
+    if (doorState && doorState !== "opened") {//tồn tại và khác opened
+      return res.status(409).json({
+        error: "Cửa chưa mở. Vui lòng mở cửa tủ trước khi xác nhận."
+      });
+    }
+
+    // 4. Gửi lệnh ĐÓNG TỦ (CLOSE)
+    const cmdId = makeCommandId();
+    const now = Date.now();
+    const lockerRef = lockerRefById(lockerId);
+
+    /*    // Ghi lệnh chờ đóng
+        await lockerRef.update({
+          command: {
+            id: cmdId,
+            action: "close",
+            status: "PENDING",
+            issuedAt: now,
+            reservationId: reservationId
+          }
+        });*/
+
+    //Transaction giúp bạn đảm bảo quy tắc quan trọng nhất: một locker chỉ có tối đa 1 command PENDING tại một thời điểm.
+    const tx = await lockerRef.child("command").transaction((current) => {
+      if (current && current.status === "PENDING") return; // đang bận
+      return {
+        id: cmdId,
+        action: "close",
+        status: "PENDING",
+        issuedAt: now,
         reservationId,
-        bookingKey
-      });
-  
-      console.log(`📱 [SMS Simulation] OTP cho khách: ${pickupOtp}`);
-  
-      return res.json({ 
-        success: true, 
-        message: "Xác nhận thành công. OTP đã được gửi cho người nhận." 
-      });
-  
-    } catch (err) {
-      console.error("[confirm-loaded] Error:", err);
-      return res.status(err.statusCode || 500).json({ error: err.message });
+        by: "shipper_confirm_loaded"
+      };
+    });
+
+    if (!tx.committed) {
+      return res.status(409).json({ error: "Tủ đang xử lý lệnh khác, vui lòng đợi vài giây." });
     }
-  });
+
+    // 5. Đợi ESP32 xác nhận đã đóng cửa thành công (waitAck)
+    const ack = await waitAck(lockerId, cmdId, 15000); // Đợi 15s cho shipper kịp đóng cửa
+
+
+    if (!ack) {
+      // await cleanupCommandIfMatch(lockerRef, cmdId);
+      try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
+      return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
+    }
+
+    if (ack.status === "FAILED") {
+      // await cleanupCommandIfMatch(lockerRef, cmdId);
+      try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
+      return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
+    }
+
+    // ACK OK -> dọn command luôn cho sạch
+    // await cleanupCommandIfMatch(lockerRef, cmdId);
+    try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
+
+    // 5.1) VERIFY LẦN CUỐI: đợi sensor fresh + xác nhận cửa đã đóng và có hàng
+    const verified = await waitLockerVerify(
+      lockerId,
+      (lk) => {
+        const hi = parseHasItem(lk.hasItem) === true;
+        const closed = isDoorClosed(lk);
+
+        // nếu bạn có doorState thì yêu cầu closed=true
+        // nếu không có doorState thì closed=null => bỏ qua check cửa
+        return hi && (closed === null ? true : closed === true);
+      },
+      { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+    );
+
+    if (!verified) {
+      const incidentId = await markNeedsAdmin(
+        lockerId,
+        reservationId,
+        "close_ack_ok_but_st_happened",
+        "JAM_CLOSE_OR_HAS_ITEM",
+        { note: "Tủ có phản hồi nhưng trạng thái cảm biến chưa đúng", meta: { cmdId, by: "shipper" } }
+      );
+
+      return res.status(409).json({
+        error: "ACK OK nhưng không xác minh được .",
+        incidentId
+      });
+    }
+
+
+
+    // 6. Hoàn tất: Tạo OTP người nhận và Update toàn bộ trạng thái
+    const pickupOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const updates = {};
+    // Cập nhật Reservation
+    updates[`/Reservations/${reservationId}/status`] = "loaded";
+    updates[`/Reservations/${reservationId}/loadedAt`] = now;
+    updates[`/Reservations/${reservationId}/pickupOtp`] = pickupOtp;
+    updates[`/Reservations/${reservationId}/otpCode`] = pickupOtp; // fallback
+
+    // Cập nhật Locker
+    updates[`/Lockers/${lockerId}/status`] = "loaded"; // Đã có hàng bên trong
+    updates[`/Lockers/${lockerId}/command`] = null; // Dọn dẹp lệnh
+
+    await db.ref().update(updates);
+
+    // 7. Log
+    await db.ref("/Logs").push().set({
+      locker: lockerId,
+      action: "confirm_loaded_success_byshipper",
+      timestamp: now,
+      reservationId,
+      bookingKey
+    });
+
+    console.log(`📱 [SMS Simulation] Gửi tới ${cur.receiverPhone || "khách"}: OTP nhận hàng là ${pickupOtp}`);
+
+    return res.json({
+      success: true,
+      message: "Xác nhận thành công. OTP đã được gửi cho người nhận."
+    });
+
+  } catch (err) {
+    console.error("[confirm-loaded] Error:", err);
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
 
 
 
@@ -1697,47 +2071,47 @@ app.post("/api/user/close-locker", authenticateToken, async (req, res) => {
       .orderByChild("receiverPhone")
       .equalTo(phoneNumber)
       .once("value");
-/*
+    /*
+        const all = snap.val() || {};
+        const openedEntries = Object.entries(all)
+          .filter(([id, r]) => r.status === "in_use")
+          .sort((a, b) => (b[1].openedAt || 0) - (a[1].openedAt || 0));
+    
+        if (openedEntries.length === 0) {
+          return res.status(400).json({ error: "Bạn không có tủ nào đang chờ đóng." });
+        }
+    */
+
     const all = snap.val() || {};
+
     const openedEntries = Object.entries(all)
-      .filter(([id, r]) => r.status === "in_use")
-      .sort((a, b) => (b[1].openedAt || 0) - (a[1].openedAt || 0));
+      .filter(([id, r]) => {
+        if (!r) return false;
+
+        // Chỉ lấy những đơn đang in_use
+        if (String(r.status || "").trim() !== "in_use") return false;
+
+        // Chỉ cho USER đóng khi inUseBy là receiver/user (tránh case shipper)
+        const by = String(r.inUseBy || "").trim().toLowerCase();
+        if (by !== "receiver" && by !== "user") return false;
+
+        // (tuỳ chọn) nếu muốn chắc hơn: phải có openedAt
+        // if (!r.openedAt) return false;
+
+        return true;
+      })
+      // sort ưu tiên cái mới nhất
+      .sort((a, b) => {
+        const ta = Number(a[1].inUseAt || a[1].openedAt || 0);
+        const tb = Number(b[1].inUseAt || b[1].openedAt || 0);
+        return tb - ta;
+      });
 
     if (openedEntries.length === 0) {
-      return res.status(400).json({ error: "Bạn không có tủ nào đang chờ đóng." });
+      return res.status(400).json({
+        error: "Bạn không có tủ nào đang mở để đóng ."
+      });
     }
-*/
-
-const all = snap.val() || {};
-
-const openedEntries = Object.entries(all)
-  .filter(([id, r]) => {
-    if (!r) return false;
-
-    // Chỉ lấy những đơn đang in_use
-    if (String(r.status || "").trim() !== "in_use") return false;
-
-    // Chỉ cho USER đóng khi inUseBy là receiver/user (tránh case shipper)
-    const by = String(r.inUseBy || "").trim().toLowerCase();
-    if (by !== "receiver" && by !== "user") return false;
-
-    // (tuỳ chọn) nếu muốn chắc hơn: phải có openedAt
-    // if (!r.openedAt) return false;
-
-    return true;
-  })
-  // sort ưu tiên cái mới nhất
-  .sort((a, b) => {
-    const ta = Number(a[1].inUseAt || a[1].openedAt || 0);
-    const tb = Number(b[1].inUseAt || b[1].openedAt || 0);
-    return tb - ta;
-  });
-
-if (openedEntries.length === 0) {
-  return res.status(400).json({
-    error: "Bạn không có tủ nào đang mở để đóng ."
-  });
-}
 
     const [reservationId, cur] = openedEntries[0];
     const lockerId = cur.lockerId;
@@ -1750,82 +2124,124 @@ if (openedEntries.length === 0) {
     }
     // ---------------------------------------
 
+    const locker = lockerSnap.val() || {};
+
+
     // 2. Kiểm tra Online trước khi gửi lệnh
     await assertLockerOnline(lockerId);
 
-
+    // 3.0) Nếu sensor stale thì KHÔNG tin
+    const now0 = Date.now();
+    if (isSensorStale(locker, now0, 5000)) {
+      return res.status(409).json({
+        error: "Tủ đang cập nhật sensor chậm (stale). Vui lòng đợi vài giây rồi thử lại."
+      });
+    }
     // QUAN TRỌNG: Kiểm tra cảm biến hàng hóa (hasItem)
 
-    
-// 3) Check cảm biến hàng hóa (chuẩn hoá)
-const hasItemRaw = lockerSnap.child("hasItem").val();
-const hasItem = parseHasItem(hasItemRaw);
 
-// Nếu cảm biến báo vẫn còn hàng -> chặn đóng
-if (hasItem === true) {
-  return res.status(409).json({
-    error: "Vẫn còn hàng trong tủ. Quý khách vui lòng kiểm tra lại."
-  });
-}
+    // 3) Check cảm biến hàng hóa (chuẩn hoá)
+    const hasItemRaw = lockerSnap.child("hasItem").val();
+    const hasItem = parseHasItem(hasItemRaw);
+
+    // Nếu cảm biến báo vẫn còn hàng -> chặn đóng
+    if (hasItem === true) {
+      return res.status(409).json({
+        error: "Vẫn còn hàng trong tủ. Quý khách vui lòng kiểm tra lại."
+      });
+    }
 
     // 3. Gửi lệnh ĐÓNG TỦ (CLOSE) qua Transaction hoặc Update
     const cmdId = makeCommandId();
     const lockerRef = lockerRefById(lockerId);
-/*
-    await lockerRef.child("command").set({
-      id: cmdId,
-      action: "CLOSE_FINAL", // Cư dân đóng để kết thúc
-      status: "PENDING",
-      issuedAt: now,
-      reservationId: reservationId
+    /*
+        await lockerRef.child("command").set({
+          id: cmdId,
+          action: "CLOSE_FINAL", // Cư dân đóng để kết thúc
+          status: "PENDING",
+          issuedAt: now,
+          reservationId: reservationId
+        });
+    */
+    const tx = await lockerRef.child("command").transaction((current) => {
+      // Nếu đang có lệnh chờ xử lý thì không cho ghi đè
+      if (current && current.status === "PENDING") return;
+
+      return {
+        id: cmdId,
+        action: "close", // Cư dân đóng để kết thúc
+        status: "PENDING",
+        issuedAt: now,
+        reservationId: reservationId,
+        by: "user"
+      };
     });
-*/
-const tx = await lockerRef.child("command").transaction((current) => {
-  // Nếu đang có lệnh chờ xử lý thì không cho ghi đè
-  if (current && current.status === "PENDING") return;
 
-  return {
-    id: cmdId,
-    action: "close", // Cư dân đóng để kết thúc
-    status: "PENDING",
-    issuedAt: now,
-    reservationId: reservationId,
-    by: "user"
-  };
-});
-
-if (!tx.committed) {
-  return res.status(409).json({
-    error: "Tủ đang xử lý lệnh trước đó, vui lòng đợi vài giây rồi thử lại."
-  });
-}
+    if (!tx.committed) {
+      return res.status(409).json({
+        error: "Tủ đang xử lý lệnh trước đó, vui lòng đợi vài giây rồi thử lại."
+      });
+    }
 
 
 
 
     // 4. Đợi ESP32 xác nhận (WaitAck) - Đảm bảo tủ ĐÃ KHÓA THẬT
-    const ack = await waitAck(lockerId, cmdId );
+    const ack = await waitAck(lockerId, cmdId);
 
-   
+
 
     if (!ack) {
-      await cleanupCommandIfMatch(lockerRef, cmdId);
+      // await cleanupCommandIfMatch(lockerRef, cmdId);
+      try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
       return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
     }
-    
+
     if (ack.status === "FAILED") {
-      await cleanupCommandIfMatch(lockerRef, cmdId);
+      // await cleanupCommandIfMatch(lockerRef, cmdId);
+      try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
       return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
     }
-    
+
     // ACK OK -> dọn command luôn cho sạch
-    await cleanupCommandIfMatch(lockerRef, cmdId);
-    
+    // await cleanupCommandIfMatch(lockerRef, cmdId);
+    try { await withTimeout(cleanupCommandIfMatch(lockerRef, cmdId), 3000, "CLEANUP"); } catch (e) { console.warn("Cleanup timeout:", e.message); }
+
+    // 5.1) VERIFY LẦN CUỐI: đợi sensor fresh + xác nhận cửa đã đóng và có hàng
+    const verified = await waitLockerVerify(
+      lockerId,
+      (lk) => {
+        const hi = parseHasItem(lk.hasItem) === false;
+        const closed = isDoorClosed(lk);
+
+        // nếu bạn có doorState thì yêu cầu closed=true
+        // nếu không có doorState thì closed=null => bỏ qua check cửa
+        return hi && (closed === null ? true : closed === true);
+      },
+      { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+    );
+
+    if (!verified) {
+      const incidentId = await markNeedsAdmin(
+        lockerId,
+        reservationId,
+        "close_ack_ok_but_door_not_closed_or_still_has_item",
+        "JAM_CLOSE_OR_HAS_ITEM",
+        { note: "ACK OK nhưng trạng thái cảm biến không đúng", meta: { cmdId, by: "user" } }
+      );
+
+      return res.status(409).json({
+        error: "ACK OK nhưng trạng thái cảm biến không đúng ",
+        incidentId
+      });
+    }
+
+
 
     // 5. ATOMIC UPDATE: Cập nhật nhiều node cùng lúc (Multi-path Update)
     // Thay thế hoàn toàn cho Transaction
     const updates = {};
-    
+
     // Kết thúc đơn hàng
     updates[`/Reservations/${reservationId}/status`] = "done";
     updates[`/Reservations/${reservationId}/closedAt`] = now;
@@ -1835,7 +2251,7 @@ if (!tx.committed) {
     updates[`/Lockers/${lockerId}/reservationId`] = null;
     updates[`/Lockers/${lockerId}/reservedBy`] = null;
     updates[`/Lockers/${lockerId}/command`] = null; // Dọn dẹp lệnh đã xong
-    updates[`/Lockers/${lockerId}/last_update`] = now;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
 
     await db.ref().update(updates);
 
@@ -1856,8 +2272,8 @@ if (!tx.committed) {
 
   } catch (err) {
     console.error("[user/close-locker] Error:", err);
-    return res.status(err.statusCode || 500).json({ 
-      error: err.message || "Lỗi khi xử lý đóng tủ" 
+    return res.status(err.statusCode || 500).json({
+      error: err.message || "Lỗi khi xử lý đóng tủ"
     });
   }
 });
@@ -1878,7 +2294,7 @@ app.post("/api/user/cancel-reservation", authenticateToken, async (req, res) => 
     const cur = (await reservationRef.once("value")).val();
     if (!cur) return res.status(404).json({ error: "Không tìm thấy đơn đặt tủ" });
     const lockerId = String(cur.lockerId || "").trim().toUpperCase();
-if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
+    if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
 
 
     // 2) quyền
@@ -1909,7 +2325,7 @@ if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerI
         status: "idle",
         reservationId: null,
         reservedBy: null,
-        last_update: now,
+        last_server_update: now,
         lastCommandAction: "release",
         lastCommandAt: now,
         lastCommandBy: phoneNumber,
@@ -1946,7 +2362,7 @@ if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerI
         status: "idle",
         reservationId: null,
         reservedBy: null,
-        last_update: now,
+        last_server_update: now,
         lastCommandAction: "release",
         lastCommandAt: now,
         lastCommandBy: phoneNumber,
@@ -1986,8 +2402,8 @@ if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerI
 app.get("/api/admin/overdue-table", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const now = Date.now();
-      // ✅ Realtime: vừa admin mở bảng là quét & gắn cờ luôn
-      await flagOverdueReservations();
+    // ✅ Realtime: vừa admin mở bảng là quét & gắn cờ luôn
+    await flagOverdueReservations();
 
     // Lấy các đơn đã gắn cờ needAdminPickup=true (do job quét quá hạn)
     const snap = await db.ref("/Reservations")
@@ -2004,7 +2420,7 @@ app.get("/api/admin/overdue-table", authenticateToken, requireAdmin, async (req,
         const exp = Number(r.expiresAt || 0);
         return exp > 0 && now > exp && ["loaded", "opened"].includes(st);
       })
-      
+
       // sort quá hạn lâu nhất: expiresAt càng nhỏ càng lâu
       .sort((a, b) => (Number(a.expiresAt || 0) - Number(b.expiresAt || 0)));
 
@@ -2066,93 +2482,154 @@ app.post("/api/admin/overdue/open", authenticateToken, requireAdmin, async (req,
     if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
 
     const lockerRef = lockerRefById(lockerId);
-    const locker = (await lockerRef.once("value")).val() || {};
+    // Thay once("value") bằng safeRead
+    const locker = (await safeRead(lockerRef, 5000)).val() || {};
     const doorState = String(locker.doorState || "").trim().toLowerCase();
     if (doorState && ["open", "opened", "opening"].includes(doorState)) {
       return res.status(409).json({ error: "Cửa đang mở sẵn, không gửi lệnh mở nữa." });
     }
 
-        // 2) check online trước khi gửi lệnh
-        await assertLockerOnline(lockerId);
+    // 2) check online trước khi gửi lệnh
+    await assertLockerOnline(lockerId);
     const adminPhone = String(req.user?.phoneNumber || "admin");
     const cmdId = makeCommandId();
-      // 3) Gửi lệnh qua transaction để chặn chồng lệnh
-      const tx = await lockerRef.child("command").transaction((current) => {
-        if (current && current.status === "PENDING") return; // hủy tx
-        return {
-          id: cmdId,
-          action: "open",
-          status: "PENDING",
-          issuedAt: now,
+    // 3) Gửi lệnh qua transaction để chặn chồng lệnh
+    const tx = await lockerRef.child("command").transaction((current) => {
+      if (current && current.status === "PENDING") return; // hủy tx
+      return {
+        id: cmdId,
+        action: "open",
+        status: "PENDING",
+        issuedAt: now,
+        reservationId,
+        by: "admin",
+        byPhone: adminPhone
+      };
+    });
+    if (!tx.committed) {
+      return res.status(409).json({ error: "Tủ đang xử lý lệnh khác, vui lòng đợi." });
+    }
+
+    // 4) Đợi ACK từ ESP32
+    const ack = await waitAck(lockerId, cmdId);
+
+    if (!ack) {
+      // timeout -> dọn command nếu vẫn là cmdId của mình (tránh xóa nhầm lệnh mới)
+      /* await lockerRef.child("command").transaction((cur) => {
+        if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
+        return cur;
+      }); */
+      try {
+        await withTimeout(lockerRef.child("command").transaction((cur) => {
+          if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
+          return cur;
+        }), 3000, "CLEANUP_TX");
+      } catch (e) { console.warn("Cleanup timeout:", e.message); }
+      return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
+    }
+
+    if (ack.status === "FAILED") {
+      // dọn command
+      /* await lockerRef.child("command").transaction((cur) => {
+        if (cur && cur.id === cmdId) return null;
+        return cur;
+      }); */
+      try {
+        await withTimeout(lockerRef.child("command").transaction((cur) => {
+          if (cur && cur.id === cmdId) return null;
+          return cur;
+        }), 3000, "CLEANUP_TX");
+      } catch (e) { console.warn("Cleanup timeout:", e.message); }
+
+      return res.status(500).json({ error: "Tủ báo lỗi vật lý khi mở khóa." });
+    }
+    const afterSnap = await lockerRef.once("value");
+    const after = afterSnap.val() || {};
+
+    const tVerify = Date.now();
+    let okOpen = true;
+
+    // nếu có door sensor thì bắt buộc cửa phải mở
+    const opened0 = isDoorOpened(after); // true/false/null
+    if (opened0 === false) okOpen = false;
+
+    // stale -> đợi sensor fresh + door open
+    if (!okOpen || isSensorStale(after, tVerify, 5000)) {
+      const verifiedOpen = await waitLockerVerify(
+        lockerId,
+        (lk) => {
+          const opened = isDoorOpened(lk);
+          return opened === null ? true : opened === true; // không có sensor => bỏ qua
+        },
+        { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+      );
+
+      if (!verifiedOpen) {
+        const incidentId = await markNeedsAdmin(
+          lockerId,
           reservationId,
-          by: "admin",
-          byPhone: adminPhone
-        };
-      });
-      if (!tx.committed) {
-        return res.status(409).json({ error: "Tủ đang xử lý lệnh khác, vui lòng đợi." });
+          "open_ack_ok_but_door_not_open",
+          "JAM_OPEN",
+          { note: "ACK OK nhưng không thấy doorState=open", meta: { cmdId, by: "admin" } }
+        );
+
+        await db.ref("/Logs").push().set({
+          phone: phoneNumber || "shipper/admin",
+          locker: lockerId,
+          action: "open_verify_failed_after_ack",
+          timestamp: Date.now(),
+          result: "failed",
+          reservationId,
+          cmdId,
+          incidentId
+        });
+
+        return res.status(409).json({
+          error: "ACK OK nhưng không xác minh được cửa đã mở (kẹt hoặc sensor trễ). Admin sẽ xử lý.",
+          incidentId
+        });
       }
+    } // End verify block (if !okOpen || stale)
 
-     // 4) Đợi ACK từ ESP32
-     const ack = await waitAck(lockerId, cmdId);
+    // 5) ACK OK -> atomic update + clear command
+    const updates = {};
 
-     if (!ack) {
-       // timeout -> dọn command nếu vẫn là cmdId của mình (tránh xóa nhầm lệnh mới)
-       await lockerRef.child("command").transaction((cur) => {
-         if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
-         return cur;
-       });
-       return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
-     }
- 
-     if (ack.status === "FAILED") {
-       // dọn command
-       await lockerRef.child("command").transaction((cur) => {
-         if (cur && cur.id === cmdId) return null;
-         return cur;
-       });
-       return res.status(500).json({ error: "Tủ báo lỗi vật lý khi mở khóa." });
-     }
- 
-     // 5) ACK OK -> atomic update + clear command
-     const updates = {};
- 
-     // Reservation: ghi nhận admin đã mở để thu hồi (không bắt buộc đổi status)
-     updates[`/Reservations/${reservationId}/adminOpenedAt`] = now;
-     updates[`/Reservations/${reservationId}/adminOpenedBy`] = adminPhone;
- 
-     // Locker: clear command + audit
-     updates[`/Lockers/${lockerId}/command`] = null;
-     updates[`/Lockers/${lockerId}/last_update`] = now;
-     updates[`/Lockers/${lockerId}/lastCommandAction`] = "open";
-     updates[`/Lockers/${lockerId}/lastCommandAt`] = now;
-     updates[`/Lockers/${lockerId}/lastCommandBy`] = adminPhone;
-     updates[`/Lockers/${lockerId}/lastCommandReservationId`] = reservationId;
- 
-     await db.ref().update(updates);
- 
-     // 6) log
-     await db.ref("/Logs").push().set({
-       phone: adminPhone,
-       locker: lockerId,
-       action: "admin_open_overdue_success",
-       timestamp: now,
-       result: "success",
-       reservationId,
-       cmdId
-     });
- 
-     return res.json({
-       success: true,
-       lockerId,
-       reservationId,
-       message: "Đã mở tủ (ACK thành công)."
-     });
-   } catch (e) {
-     console.error("[admin/overdue/open] error:", e);
-     return res.status(e.statusCode || 500).json({ error: e.message || "Lỗi mở tủ" });
-   }
- });
+    // Reservation: ghi nhận admin đã mở để thu hồi (không bắt buộc đổi status)
+    updates[`/Reservations/${reservationId}/adminOpenedAt`] = now;
+    updates[`/Reservations/${reservationId}/adminOpenedBy`] = adminPhone;
+
+    // Locker: clear command + audit
+    updates[`/Lockers/${lockerId}/command`] = null;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
+    updates[`/Lockers/${lockerId}/lastCommandAction`] = "open";
+    updates[`/Lockers/${lockerId}/lastCommandAt`] = now;
+    updates[`/Lockers/${lockerId}/lastCommandBy`] = adminPhone;
+    updates[`/Lockers/${lockerId}/lastCommandReservationId`] = reservationId;
+
+    await db.ref().update(updates);
+
+    // 6) log
+    await db.ref("/Logs").push().set({
+      phone: adminPhone,
+      locker: lockerId,
+      action: "admin_open_overdue_success",
+      timestamp: now,
+      result: "success",
+      reservationId,
+      cmdId
+    });
+
+    return res.json({
+      success: true,
+      lockerId,
+      reservationId,
+      message: "Đã mở tủ (ACK thành công)."
+    });
+  } catch (e) {
+    console.error("[admin/overdue/open] error:", e);
+    return res.status(e.statusCode || 500).json({ error: e.message || "Lỗi mở tủ" });
+  }
+});
 
 
 //16.nut đóng tủ
@@ -2169,89 +2646,130 @@ app.post("/api/admin/overdue/close", authenticateToken, requireAdmin, async (req
     if (!lockerId) return res.status(400).json({ error: "Reservation thiếu lockerId" });
 
     const lockerRef = lockerRefById(lockerId);
-    const locker = (await lockerRef.once("value")).val() || {};
+    // Thay once("value") bằng safeRead
+    const locker = (await safeRead(lockerRef, 5000)).val() || {};
     const doorState = String(locker.doorState || "").trim().toLowerCase();
+
 
     // Nếu có cảm biến và đã đóng rồi -> báo OK luôn
     if (doorState && ["closed", "close", "closing"].includes(doorState)) {
       return res.json({ success: true, lockerId, reservationId, message: "Cửa đã đóng sẵn." });
     }
- // check online trước khi gửi lệnh
- await assertLockerOnline(lockerId);
+    // check online trước khi gửi lệnh
+    await assertLockerOnline(lockerId);
 
- const now = Date.now();
- const adminPhone = String(req.user?.phoneNumber || "admin");
- const cmdId = makeCommandId();
+    const now = Date.now();
+    const adminPhone = String(req.user?.phoneNumber || "admin");
+    const cmdId = makeCommandId();
 
- // gửi lệnh qua transaction để chặn chồng lệnh
- const tx = await lockerRef.child("command").transaction((current) => {
-   if (current && current.status === "PENDING") return; // đang bận
-   return {
-     id: cmdId,
-     action: "close",
-     status: "PENDING",
-     issuedAt: now,
-     reservationId,
-     by: "admin",
-     byPhone: adminPhone
-   };
- });
+    // gửi lệnh qua transaction để chặn chồng lệnh
+    const tx = await lockerRef.child("command").transaction((current) => {
+      if (current && current.status === "PENDING") return; // đang bận
+      return {
+        id: cmdId,
+        action: "close",
+        status: "PENDING",
+        issuedAt: now,
+        reservationId,
+        by: "admin",
+        byPhone: adminPhone
+      };
+    });
 
- if (!tx.committed) {
-   return res.status(409).json({ error: "Tủ đang xử lý lệnh khác, vui lòng đợi." });
- }
+    if (!tx.committed) {
+      return res.status(409).json({ error: "Tủ đang xử lý lệnh khác, vui lòng đợi." });
+    }
 
- // đợi ack
- const ack = await waitAck(lockerId, cmdId);
+    // đợi ack
+    const ack = await waitAck(lockerId, cmdId);
 
- if (!ack) {
-   // timeout -> dọn command nếu vẫn là cmd của mình
-   await lockerRef.child("command").transaction((cur) => {
-     if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
-     return cur;
-   });
-   return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
- }
+    if (!ack) {
+      try {
+        await withTimeout(lockerRef.child("command").transaction((cur) => {
+          if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
+          return cur;
+        }), 3000, "CLEANUP_TX");
+      } catch (e) { console.warn("Cleanup timeout:", e.message); }
+      return res.status(504).json({ error: "Tủ không phản hồi. Vui lòng kiểm tra kết nối của tủ." });
+    }
 
- if (ack.status === "FAILED") {
-   await lockerRef.child("command").transaction((cur) => {
-     if (cur && cur.id === cmdId) return null;
-     return cur;
-   });
-   return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
- }
+    if (ack.status === "FAILED") {
+      try {
+        await withTimeout(lockerRef.child("command").transaction((cur) => {
+          if (cur && cur.id === cmdId) return null;
+          return cur;
+        }), 3000, "CLEANUP_TX");
+      } catch (e) { console.warn("Cleanup timeout:", e.message); }
+      return res.status(500).json({ error: "Tủ báo lỗi vật lý khi đóng." });
+    }
+    // đọc lại locker mới nhất
+    const after = (await lockerRef.once("value")).val() || {};
+    const nowV = Date.now();
 
- // ACK OK -> cập nhật + clear command
- const updates = {};
- updates[`/Reservations/${reservationId}/adminClosedAt`] = now;
- updates[`/Reservations/${reservationId}/adminClosedBy`] = adminPhone;
+    let okClosed = true;
 
- updates[`/Lockers/${lockerId}/command`] = null;
- updates[`/Lockers/${lockerId}/last_update`] = now;
- updates[`/Lockers/${lockerId}/lastCommandAction`] = "close";
- updates[`/Lockers/${lockerId}/lastCommandAt`] = now;
- updates[`/Lockers/${lockerId}/lastCommandBy`] = adminPhone;
- updates[`/Lockers/${lockerId}/lastCommandReservationId`] = reservationId;
+    // nếu có door sensor => bắt buộc phải closed
+    const closed0 = isDoorClosed(after); // true/false/null
+    if (closed0 === false) okClosed = false;
 
- await db.ref().update(updates);
+    // stale -> đợi sensor fresh + door closed
+    if (!okClosed || isSensorStale(after, nowV, 5000)) {
+      const verifiedClosed = await waitLockerVerify(
+        lockerId,
+        (lk) => {
+          const closed = isDoorClosed(lk);
+          return closed === null ? true : closed === true; // không có sensor => bỏ qua
+        },
+        { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+      );
 
- await db.ref("/Logs").push().set({
-   phone: adminPhone,
-   locker: lockerId,
-   action: "admin_close_overdue_success",
-   timestamp: now,
-   result: "success",
-   reservationId,
-   cmdId
- });
+      if (!verifiedClosed) {
+        const incidentId = await markNeedsAdmin(
+          lockerId,
+          reservationId,
+          "close_ack_ok_but_door_not_closed",
+          "JAM_CLOSE",
+          { note: "ACK OK nhưng không thấy doorState=closed", meta: { cmdId, by: "admin" } }
+        );
 
- return res.json({ success: true, lockerId, reservationId, message: "Đã đóng tủ (ACK thành công)." });
-} catch (e) {
- console.error("[admin/overdue/close] error:", e);
- return res.status(e.statusCode || 500).json({ error: e.message || "Lỗi đóng tủ" });
-}
+        return res.status(409).json({
+          error: "ACK OK nhưng không xác minh được cửa đã đóng (kẹt hoặc sensor trễ).",
+          incidentId
+        });
+      }
+    } // End loop verify
+
+    // ACK OK -> cập nhật + clear command
+    const updates = {};
+    updates[`/Reservations/${reservationId}/adminClosedAt`] = now;
+    updates[`/Reservations/${reservationId}/adminClosedBy`] = adminPhone;
+
+    updates[`/Lockers/${lockerId}/command`] = null;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
+    updates[`/Lockers/${lockerId}/lastCommandAction`] = "close";
+    updates[`/Lockers/${lockerId}/lastCommandAt`] = now;
+    updates[`/Lockers/${lockerId}/lastCommandBy`] = adminPhone;
+    updates[`/Lockers/${lockerId}/lastCommandReservationId`] = reservationId;
+
+    await db.ref().update(updates);
+
+    await db.ref("/Logs").push().set({
+      phone: adminPhone,
+      locker: lockerId,
+      action: "admin_close_overdue_success",
+      timestamp: now,
+      result: "success",
+      reservationId,
+      cmdId
+    });
+
+    return res.json({ success: true, lockerId, reservationId, message: "Đã đóng tủ (ACK thành công)." });
+  } catch (e) {
+    console.error("[admin/overdue/close] error:", e);
+    return res.status(e.statusCode || 500).json({ error: e.message || "Lỗi đóng tủ" });
+  }
 });
-   
+
 //17.confirm
 app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -2263,8 +2781,10 @@ app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, a
     if (!r) return res.status(404).json({ error: "Reservation not found" });
 
     const st = String(r.status || "").trim();
-    if (!["loaded", "opened"].includes(st)) {
-      // idempotent
+    // Quay lại logic ban đầu: Chỉ xử lý loaded/opened
+    const canConfirm = ["loaded", "opened"].includes(st);
+
+    if (!canConfirm) {
       if (["cleared", "done", "closed"].includes(st)) {
         return res.json({ success: true, reservationId, message: "Đơn đã được xử lý trước đó." });
       }
@@ -2281,6 +2801,30 @@ app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, a
 
     // 0) check online trước khi gửi lệnh close
     await assertLockerOnline(lockerId);
+    // Thay once("value") bằng safeRead
+    const lockerSnap = await safeRead(lockerRef, 5000);
+    const locker = lockerSnap.val() || {};
+
+    // 3.0) Nếu sensor stale thì KHÔNG tin
+    const now0 = Date.now();
+    if (isSensorStale(locker, now0, 5000)) {
+      return res.status(409).json({
+        error: "Tủ đang cập nhật sensor chậm (stale). Vui lòng đợi vài giây rồi thử lại."
+      });
+    }
+
+
+    // 3.1) Check hasItem trước khi cho đóng
+    const hasItem = parseHasItem(locker.hasItem);
+    if (hasItem === true) {
+      return res.status(409).json({ error: "Còn hàng trong tủ." });
+    }
+
+    // 3.2) Nếu bạn bắt buộc cửa phải đang mở trước khi confirm-loaded
+    const opened = isDoorOpened(locker);
+    if (opened === false) {
+      return res.status(409).json({ error: "Cửa chưa mở. Vui lòng mở cửa tủ trước khi xác nhận đã lấy hàng." });
+    }
 
     // 1) gửi lệnh CLOSE qua transaction (chặn chồng lệnh)
     const cmdId = makeCommandId();
@@ -2306,19 +2850,57 @@ app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, a
 
     if (!ack) {
       // timeout -> dọn command nếu vẫn là lệnh của mình
-      await lockerRef.child("command").transaction((cur) => {
+      /* await lockerRef.child("command").transaction((cur) => {
         if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
         return cur;
-      });
+      }); */
+      try {
+        await withTimeout(lockerRef.child("command").transaction((cur) => {
+          if (cur && cur.id === cmdId && cur.status === "PENDING") return null;
+          return cur;
+        }), 3000, "CLEANUP_TX");
+      } catch (e) { console.warn("Cleanup timeout:", e.message); }
+
       return res.status(504).json({ error: "Tủ không phản hồi khi đóng. Vui lòng thử lại." });
     }
 
     if (ack.status === "FAILED") {
-      await lockerRef.child("command").transaction((cur) => {
-        if (cur && cur.id === cmdId) return null;
-        return cur;
-      });
+      try {
+        await withTimeout(lockerRef.child("command").transaction((cur) => {
+          if (cur && cur.id === cmdId) return null;
+          return cur;
+        }), 3000, "CLEANUP_TX");
+      } catch (e) { console.warn("Cleanup timeout:", e.message); }
       return res.status(500).json({ error: "Lỗi vật lý: Không thể chốt khóa khi đóng tủ." });
+    }
+
+    // 5.1) VERIFY LẦN CUỐI: đợi sensor fresh + xác nhận cửa đã đóng và có hàng
+    const verified = await waitLockerVerify(
+      lockerId,
+      (lk) => {
+        const hi = parseHasItem(lk.hasItem) === false;
+        const closed = isDoorClosed(lk);
+
+        // nếu bạn có doorState thì yêu cầu closed=true
+        // nếu không có doorState thì closed=null => bỏ qua check cửa
+        return hi && (closed === null ? true : closed === true);
+      },
+      { timeoutMs: 4000, intervalMs: 250, staleMs: 5000 }
+    );
+
+    if (!verified) {
+      const incidentId = await markNeedsAdmin(
+        lockerId,
+        reservationId,
+        "close_ack_ok_but_door_not_closed_or_still_has_item",
+        "JAM_CLOSE_OR_HAS_ITEM",
+        { note: "ACK OK nhưng trạng thái cảm biến không đúng", meta: { cmdId, by: "admin" } }
+      );
+
+      return res.status(409).json({
+        error: "ACK OK nhưng trạng thái cảm biến không đúng.",
+        incidentId
+      });
     }
 
     // 3) ACK OK -> multipath update: reservation cleared + nhả locker idle + clear command
@@ -2338,13 +2920,33 @@ app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, a
     updates[`/Lockers/${lockerId}/reservationId`] = null;
     updates[`/Lockers/${lockerId}/reservedBy`] = null;
     updates[`/Lockers/${lockerId}/command`] = null;
-    updates[`/Lockers/${lockerId}/last_update`] = now;
+    updates[`/Lockers/${lockerId}/last_server_update`] = now;
     updates[`/Lockers/${lockerId}/lastCommandAction`] = "close";
     updates[`/Lockers/${lockerId}/lastCommandAt`] = now;
     updates[`/Lockers/${lockerId}/lastCommandBy`] = adminPhone;
     updates[`/Lockers/${lockerId}/lastCommandReservationId`] = reservationId;
 
     await db.ref().update(updates);
+
+    // 3.1) Tự động RESOLVE các incident liên quan
+    try {
+      const incSnap = await db.ref("/Incidents")
+        .orderByChild("reservationId")
+        .equalTo(reservationId)
+        .once("value");
+      const incObj = incSnap.val() || {};
+      const incUpdates = {};
+      Object.keys(incObj).forEach(id => {
+        if (incObj[id].status === "open") {
+          incUpdates[`/Incidents/${id}/status`] = "resolved";
+          incUpdates[`/Incidents/${id}/resolvedAt`] = now;
+          incUpdates[`/Incidents/${id}/resolvedNote`] = "Auto-resolved by confirm-picked";
+        }
+      });
+      if (Object.keys(incUpdates).length > 0) {
+        await db.ref().update(incUpdates);
+      }
+    } catch (e) { console.error("Auto-resolve incidents failed:", e); }
 
     // 4) log
     await db.ref("/Logs").push().set({
@@ -2361,6 +2963,64 @@ app.post("/api/admin/overdue/confirm-picked", authenticateToken, requireAdmin, a
   } catch (e) {
     console.error("[admin/overdue/confirm-picked] error:", e);
     return res.status(e.statusCode || 500).json({ error: e.message || "Lỗi xác nhận lấy hàng" });
+  }
+});
+
+
+app.get("/api/admin/incidents", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const status = String(req.query.status || "open").trim().toLowerCase(); // open|all|resolved
+    const snap = await db.ref("/Incidents").limitToLast(200).once("value");
+    const obj = snap.val() || {};
+
+    let rows = Object.entries(obj).map(([id, x]) => ({ id, ...(x || {}) }));
+
+    if (status === "open") rows = rows.filter(x => x.status === "open");
+    else if (status === "resolved") rows = rows.filter(x => x.status === "resolved");
+
+    rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    res.json({ success: true, count: rows.length, rows });
+  } catch (e) {
+    console.error("[admin/incidents] error:", e);
+    res.status(500).json({ error: "Failed to get incidents" });
+  }
+});
+
+app.post("/api/admin/incidents/resolve", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const incidentId = String(req.body?.incidentId || "").trim();
+    const note = String(req.body?.note || "").trim();
+    if (!incidentId) return res.status(400).json({ error: "incidentId required" });
+
+    const now = Date.now();
+    const incSnap = await db.ref(`/Incidents/${incidentId}`).once("value");
+    const incData = incSnap.val();
+
+    await db.ref(`/Incidents/${incidentId}`).update({
+      status: "resolved",
+      resolvedAt: now,
+      resolvedNote: note || "resolved_by_admin"
+    });
+
+    // Nếu Incident có gắn với Locker/Reservation, hãy dọn dẹp luôn các cờ lỗi ở đó
+    if (incData && incData.lockerId) {
+      const updates = {};
+      updates[`/Lockers/${incData.lockerId}/status`] = "idle"; // Đưa về idle nếu đang kẹt
+      updates[`/Lockers/${incData.lockerId}/reservationId`] = null;
+      updates[`/Lockers/${incData.lockerId}/command`] = null;
+
+      if (incData.reservationId) {
+        updates[`/Reservations/${incData.reservationId}/needAdminPickup`] = false;
+        updates[`/Reservations/${incData.reservationId}/status`] = "cleared"; // Hoặc kết thúc đơn
+      }
+      await db.ref().update(updates);
+    }
+
+    return res.json({ success: true, incidentId });
+  } catch (e) {
+    console.error("[admin/incidents/resolve] error:", e);
+    res.status(500).json({ error: "Failed to resolve incident" });
   }
 });
 

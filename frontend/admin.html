@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -62,13 +63,11 @@
       inset: 0;
       background-image:
         linear-gradient(135deg, rgba(244, 162, 38, 0.08), transparent 55%),
-        repeating-linear-gradient(
-          -45deg,
+        repeating-linear-gradient(-45deg,
           rgba(249, 207, 124, 0.08),
           rgba(249, 207, 124, 0.08) 6px,
           transparent 6px,
-          transparent 12px
-        );
+          transparent 12px);
       pointer-events: none;
     }
 
@@ -85,6 +84,69 @@
       align-items: center;
       gap: 12px;
       margin-bottom: 12px;
+    }
+
+    /* ===== MÀU MÀU NÂU NHẠT (WHEAT/TAN) CHO BẢNG SỰ CỐ / QUÁ HẠN ===== */
+    .dark-wood-panel {
+      display: none;
+      /* Mặc định ẩn */
+      margin-top: 15px;
+      padding: 15px;
+      border-radius: 16px;
+      /* Background màu nâu nhạt ấm áp (Wheat/Tan) */
+      background: linear-gradient(145deg, #f5deb3, #daa520);
+      color: #3e2723;
+      /* Chữ nâu đậm để dễ đọc */
+      border: 1px solid #c19a6b;
+      box-shadow: 0 6px 16px rgba(139, 90, 43, 0.25);
+      position: relative;
+    }
+
+    .dark-wood-panel h4 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 700;
+      /* Đậm rõ */
+      color: #6d4c41;
+      /* Nâu chocolate đậm */
+      border-bottom: 2px solid rgba(62, 39, 35, 0.2);
+      padding-bottom: 8px;
+    }
+
+    .dark-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      /* Tăng size */
+    }
+
+    .dark-table th {
+      text-align: left;
+      padding: 7px;
+      color: #4e342e;
+      /* Nâu đậm */
+      font-weight: 700;
+      /* Đậm rõ */
+      border-bottom: 2px solid rgba(62, 39, 35, 0.3);
+    }
+
+    .dark-table td {
+      padding: 7px;
+      border-bottom: 1px solid rgba(62, 39, 35, 0.15);
+      color: #5d4037;
+      /* Nâu vừa */
+      font-weight: 600;
+      /* Chữ đậm hơn tí */
+    }
+
+    .dark-table .small-text {
+      color: #6d4c41;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .dark-table button {
+      margin-right: 4px;
     }
 
     .brand-left {
@@ -253,7 +315,7 @@
     input[type="number"]:focus {
       border-color: var(--wood-accent);
       box-shadow: 0 0 0 1px rgba(244, 162, 38, 0.25),
-                  0 0 0 4px rgba(244, 162, 38, 0.1);
+        0 0 0 4px rgba(244, 162, 38, 0.1);
       background: #fffbeb;
     }
 
@@ -331,9 +393,21 @@
       color: #166534;
     }
 
+    .badge-status.in-use {
+      background: rgba(139, 92, 246, 0.15);
+      color: #6d28d9;
+    }
+
     .badge-status.expired {
       background: rgba(239, 68, 68, 0.15);
       color: #b91c1c;
+    }
+
+    .badge-status.needs-admin {
+      background: rgba(239, 68, 68, 0.4);
+      color: #7f1d1d;
+      font-weight: 700;
+      border: 1px solid #7f1d1d;
     }
 
     .status-dot-small {
@@ -342,7 +416,10 @@
       border-radius: 999px;
       background: #22c55e;
     }
-    #reservationsTable { table-layout: auto; }
+
+    #reservationsTable {
+      table-layout: auto;
+    }
 
     #reservationsTable {
       width: 100%;
@@ -364,8 +441,18 @@
       font-size: 11px;
     }
 
+    /* ===== FIX: logs table không tràn / không lệch ===== */
+    #panelLogs {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
     #logsTable {
       width: 100%;
+      min-width: 820px;
+      /* màn hẹp sẽ có scroll ngang */
+      table-layout: fixed;
+      /* cố định cột */
       border-collapse: collapse;
       margin-top: 6px;
       font-size: 11px;
@@ -373,50 +460,124 @@
 
     #logsTable th,
     #logsTable td {
-      padding: 4px 6px;
+      padding: 6px 6px;
+      border-bottom: 1px solid rgba(148, 121, 72, 0.4);
+      text-align: left;
+      vertical-align: top;
+
+      white-space: normal;
+      /* cho xuống dòng */
+      word-break: break-word;
+      /* bẻ chữ dài */
+      overflow-wrap: anywhere;
+    }
+
+    /* set width cột cho gọn */
+    #logsTable th:nth-child(1),
+    #logsTable td:nth-child(1) {
+      width: 120px;
+    }
+
+    /* thời gian */
+    #logsTable th:nth-child(2),
+    #logsTable td:nth-child(2) {
+      width: 110px;
+    }
+
+    /* sđt */
+    #logsTable th:nth-child(3),
+    #logsTable td:nth-child(3) {
+      width: 60px;
+    }
+
+    /* tủ */
+    #logsTable th:nth-child(5),
+    #logsTable td:nth-child(5) {
+      width: 70px;
+    }
+
+    /* kết quả */
+    #logsTable th:nth-child(6),
+    #logsTable td:nth-child(6) {
+      width: 220px;
+    }
+
+    /* đơn */
+
+    /* cột hành động cho phép dài nhưng vẫn xuống dòng */
+    #logsTable th:nth-child(4),
+    #logsTable td:nth-child(4) {
+      width: 220px;
+    }
+
+
+    /* ===== Fix layout cho overdueWrap + incidentsWrap ===== */
+    #overdueWrap,
+    #incidentsWrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Đảm bảo bảng bên trong không bị co lại quá mức trên mobile */
+    .dark-table {
+      min-width: 760px;
+      table-layout: fixed;
+    }
+
+    /* Style chung cho text trong bảng (xuống dòng khi quá dài) */
+    .dark-table th,
+    .dark-table td {
+      white-space: normal;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+
+    /* Incidents table: giống style overdue */
+    #incidentsTable {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 11px;
+    }
+
+    #incidentsTable th,
+    #incidentsTable td {
+      padding: 6px 6px;
       border-bottom: 1px solid rgba(148, 121, 72, 0.4);
       text-align: left;
       vertical-align: top;
     }
 
-    .small-text {
+    #incidentsTable th {
+      font-weight: 600;
       font-size: 11px;
-      opacity: 0.85;
     }
-    /* Overdue table: giống style reservations/logs */
-#overdueTable {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 8px;
-  font-size: 11px;
-}
-
-#overdueTable th,
-#overdueTable td {
-  padding: 6px 6px;
-  border-bottom: 1px solid rgba(148, 121, 72, 0.4);
-  text-align: left;
-  vertical-align: top;
-}
-
-#overdueTable th {
-  font-weight: 600;
-  font-size: 11px;
-}
-
-/* Disabled button nhìn rõ là disable chứ không “mất” */
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  box-shadow: none !important;
-  filter: grayscale(0.25);
-}
-#tabLockers { display: none; }
-#panelLockers { display: none !important; }
 
 
+    /* Disabled button nhìn rõ là disable chứ không “mất” */
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none !important;
+      filter: grayscale(0.25);
+    }
+
+    #tabLockers {
+      display: none;
+    }
+
+    #panelLockers {
+      display: none !important;
+    }
+
+    /* ===== FIX layout: bạn đã tắt panel lockers nên dùng 1 cột cho admin-body ===== */
+    .admin-body {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
   </style>
 </head>
+
 <body>
   <div class="admin-shell">
     <div class="admin-card">
@@ -508,38 +669,75 @@ button:disabled {
             <button class="btn-secondary" id="btnToggleOverdue" onclick="toggleOverdueTable()">
               <i class="fas fa-triangle-exclamation"></i> Đơn quá hạn
             </button>
-            <!-- ✅ BẢNG ĐƠN QUÁ HẠN (ẨN MẶC ĐỊNH) -->
-<div id="overdueWrap" style="display:none; margin-top:10px; padding:10px; border-radius:14px; background:#ffffff; border:1px dashed rgba(180,119,41,0.45);">
-  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-    <div style="font-weight:600;">
-      <i class="fas fa-triangle-exclamation"></i> Danh sách đơn quá hạn (lâu nhất lên đầu)
-    </div>
-    <button class="btn-secondary" onclick="loadOverdueTable()">
-      <i class="fas fa-rotate-right"></i> Tải lại
-    </button>
-  </div>
+            <button class="btn-secondary" id="btnToggleIncidents" onclick="toggleIncidentsTable()">
+              <i class="fas fa-bug"></i> Sự cố
+            </button>
 
-  <div class="small-text" id="overdueSummary" style="margin-top:4px;"></div>
+            <!-- ✅ KHU VỰC ĐƠN QUÁ HẠN (DARK WOOD) -->
+            <div id="overdueWrap" class="dark-wood-panel">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                <h4><i class="fas fa-triangle-exclamation"></i> Danh sách đơn quá hạn</h4>
+                <button class="btn-secondary" onclick="loadOverdueTable()" style="font-size:10px; padding:2px 8px;">
+                  <i class="fas fa-rotate-right"></i> Tải lại
+                </button>
+              </div>
 
-  <div id="overdueEmpty" style="margin-top:6px; font-size:12px; color:#9ca3af; display:none;">
-    Không có đơn quá hạn cần xử lý.
-  </div>
+              <div class="small-text" id="overdueSummary" style="margin-top:4px; color:#3e2723; font-weight:700;"></div>
 
-  <table id="overdueTable" style="display:none;">
-    <thead>
-      <tr>
-        <th>reservationId</th>
-        <th>LockerId</th>
-        <th>doorState</th>
-        <th>hasItem</th>
-        <th>status</th>
-        <th>receiverPhone</th>
-        <th>Hết hạn lúc</th>
-      </tr>
-    </thead>
-    <tbody id="overdueTbody"></tbody>
-  </table>
-</div>
+              <div id="overdueEmpty"
+                style="margin-top:6px; font-size:12px; color:#4e342e; font-weight:700; display:none;">
+                Không có đơn quá hạn cần xử lý.
+              </div>
+
+              <table id="overdueTable" class="dark-table" style="display:none;">
+                <thead>
+                  <tr>
+                    <th>Mã đơn (Reser)</th>
+                    <th>Tủ</th>
+                    <th>Cửa</th>
+                    <th>Cảm biến</th>
+                    <th>Trạng thái</th>
+                    <th>SĐT Nhận</th>
+                    <th>Hết hạn</th>
+                    <th>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="overdueTbody"></tbody>
+              </table>
+            </div>
+
+            <!-- ✅ KHU VỰC SỰ CỐ (DARK WOOD) - TÁCH RIÊNG -->
+            <div id="incidentsWrap" class="dark-wood-panel">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                <h4><i class="fas fa-bug"></i> Danh sách sự cố (Incidents)</h4>
+                <button class="btn-secondary" onclick="loadIncidentsTable()" style="font-size:10px; padding:2px 8px;">
+                  <i class="fas fa-rotate-right"></i> Tải lại
+                </button>
+              </div>
+
+              <div class="small-text" id="incidentsSummary" style="margin-top:4px; color:#3e2723; font-weight:700;">
+              </div>
+
+              <div id="incidentsEmpty"
+                style="margin-top:6px; font-size:12px; color:#4e342e; font-weight:700; display:none;">
+                Không có sự cố đang mở.
+              </div>
+
+              <table id="incidentsTable" class="dark-table" style="display:none;">
+                <thead>
+                  <tr>
+                    <th>Thời gian</th>
+                    <th>Loại lỗi</th>
+                    <th>Tủ</th>
+                    <th>Mã đơn </th>
+                    <th>Ghi chú </th>
+                    <th>Trạng thái lỗi</th>
+                    <th>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="incidentsTbody"></tbody>
+              </table>
+            </div>
 
 
             <div class="small-text" style="margin-top:4px;" id="reservationsSummary"></div>
@@ -557,7 +755,7 @@ button:disabled {
                   <th>Mã đặt tủ</th>
                   <th>Trạng thái</th>
                   <th>Hết hạn</th>
-                
+
                 </tr>
               </thead>
               <tbody id="reservationsTbody"></tbody>
@@ -652,7 +850,7 @@ button:disabled {
     tabLockers.addEventListener("click", () => setActiveTab("lockers"));
     tabReservations.addEventListener("click", () => {
       setActiveTab("reservations");
-     loadAdminReservations();
+      loadAdminReservations();
       //startAutoRefresh();
     });
     tabLogs.addEventListener("click", () => {
@@ -708,8 +906,8 @@ button:disabled {
           const expiresAt = r.expiresAt
             ? new Date(r.expiresAt).toLocaleString("vi-VN")
             : "-";
-            const isDone = (String(r.status || "").toLowerCase() === "done");
-const isExpired = !isDone && r.expiresAt && now > r.expiresAt;
+          const isDone = (String(r.status || "").toLowerCase() === "done");
+          const isExpired = !isDone && r.expiresAt && now > r.expiresAt;
 
           if (isExpired) expiredCount++;
 
@@ -717,16 +915,20 @@ const isExpired = !isDone && r.expiresAt && now > r.expiresAt;
           if (r.status === "booked") statusClass += " booked";
           else if (r.status === "loaded") statusClass += " loaded";
           else if (r.status === "opened") statusClass += " opened";
+          else if (r.status === "in_use") statusClass += " in-use";
+
+          const needsFix = (r.needAdminPickup === true);
+          if (needsFix) statusClass += " needs-admin";
           if (isExpired) statusClass += " expired";
 
           const statusHtml = `
             <span class="badge ${statusClass}">
-              <span class="status-dot-small" style="background:${isExpired ? "#ef4444" : "#22c55e"};"></span>
-              ${r.status || "unknown"}${isExpired ? " (quá hạn)" : ""}
+              <span class="status-dot-small" style="background:${(isExpired || needsFix) ? "#ef4444" : "#22c55e"};"></span>
+              ${r.status || "unknown"}${isExpired ? " (quá hạn)" : ""}${needsFix ? " (LỖI)" : ""}
             </span>
           `;
 
-       
+
 
           tr.innerHTML = `
             <td>${createdAt}</td>
@@ -750,7 +952,7 @@ const isExpired = !isDone && r.expiresAt && now > r.expiresAt;
       }
     }
 
-// === Admin: load logs ===
+    // === Admin: load logs ===
     async function loadAdminLogs() {
       const tbody = document.getElementById("logsTbody");
       const table = document.getElementById("logsTable");
@@ -802,80 +1004,82 @@ const isExpired = !isDone && r.expiresAt && now > r.expiresAt;
       }
     }
     // ====== TOGGLE OVERDUE TABLE ======
-let overdueVisible = false;
+    let overdueVisible = false;
 
-function toggleOverdueTable() {
-  const wrap = document.getElementById("overdueWrap");
-  const btn = document.getElementById("btnToggleOverdue");
-  overdueVisible = !overdueVisible;
+    function toggleOverdueTable() {
+      const wrap = document.getElementById("overdueWrap");
+      const btn = document.getElementById("btnToggleOverdue");
+      overdueVisible = !overdueVisible;
 
-  if (wrap) wrap.style.display = overdueVisible ? "block" : "none";
-  if (btn) {
-    btn.innerHTML = overdueVisible
-      ? '<i class="fas fa-eye-slash"></i> Ẩn đơn quá hạn'
-      : '<i class="fas fa-triangle-exclamation"></i> Đơn quá hạn';
-  }
+      if (wrap) wrap.style.display = overdueVisible ? "block" : "none";
+      if (btn) {
+        btn.innerHTML = overdueVisible
+          ? '<i class="fas fa-times"></i> Đóng Overdue'
+          : '<i class="fas fa-triangle-exclamation"></i> <strong>Đơn quá hạn</strong>';
+        btn.style.background = overdueVisible ? "#8b5a2b" : "#fff7ed";
+        btn.style.color = overdueVisible ? "#fff" : "#78350f";
+      }
 
-  // vừa bật lên thì load luôn
-  if (overdueVisible) loadOverdueTable();
-}
-
-function normalizeDoorState(s) {
-  return String(s || "").trim().toLowerCase();
-}
-function isDoorOpenState(doorState) {
-  const ds = normalizeDoorState(doorState);
-  return ds === "open" || ds === "opened" || ds === "opening";
-}
-function isDoorClosedState(doorState) {
-  const ds = normalizeDoorState(doorState);
-  return ds === "close" || ds === "closed" || ds === "closing";
-}
-
-// ====== LOAD OVERDUE TABLE ======
-async function loadOverdueTable() {
-  const tbody = document.getElementById("overdueTbody");
-  const table = document.getElementById("overdueTable");
-  const emptyEl = document.getElementById("overdueEmpty");
-  const summaryEl = document.getElementById("overdueSummary");
-  if (!tbody) return;
-
-  tbody.innerHTML = "";
-  if (emptyEl) emptyEl.style.display = "none";
-  if (table) table.style.display = "none";
-  if (summaryEl) summaryEl.textContent = "Đang tải...";
-
-  try {
-    const res = await fetch(`${API_BASE}/admin/overdue-table`, {
-      method: "GET",
-      headers: authManager.getAuthHeaders()
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || "Không lấy được danh sách đơn quá hạn");
+      // vừa bật lên thì load luôn
+      if (overdueVisible) loadOverdueTable();
     }
 
-    const rows = data.rows || [];
-    if (!rows.length) {
-      if (emptyEl) emptyEl.style.display = "block";
-      if (summaryEl) summaryEl.textContent = "0 đơn quá hạn cần xử lý.";
-      return;
+    function normalizeDoorState(s) {
+      return String(s || "").trim().toLowerCase();
+    }
+    function isDoorOpenState(doorState) {
+      const ds = normalizeDoorState(doorState);
+      return ds === "open" || ds === "opened" || ds === "opening";
+    }
+    function isDoorClosedState(doorState) {
+      const ds = normalizeDoorState(doorState);
+      return ds === "close" || ds === "closed" || ds === "closing";
     }
 
-    if (table) table.style.display = "table";
-    if (summaryEl) summaryEl.textContent = `Có ${rows.length} đơn quá hạn (lâu nhất lên đầu).`;
+    // ====== LOAD OVERDUE TABLE ======
+    async function loadOverdueTable() {
+      const tbody = document.getElementById("overdueTbody");
+      const table = document.getElementById("overdueTable");
+      const emptyEl = document.getElementById("overdueEmpty");
+      const summaryEl = document.getElementById("overdueSummary");
+      if (!tbody) return;
 
-    rows.forEach(r => {
-      const tr = document.createElement("tr");
-      const exp = r.expiresAt ? new Date(r.expiresAt).toLocaleString("vi-VN") : "-";
-      const hasItemText = (r.hasItem === true) ? "true" : (r.hasItem === false ? "false" : "-");
+      tbody.innerHTML = "";
+      if (emptyEl) emptyEl.style.display = "none";
+      if (table) table.style.display = "none";
+      if (summaryEl) summaryEl.textContent = "Đang tải...";
 
-      const disableOpen = !!r.doorState && isDoorOpenState(r.doorState);
-      const disableClose = !!r.doorState && isDoorClosedState(r.doorState);
-      const disableConfirm = (r.hasItem === true); // nếu có cảm biến thì chặn nhả tủ khi còn hàng
+      try {
+        const res = await fetch(`${API_BASE}/admin/overdue-table`, {
+          method: "GET",
+          headers: authManager.getAuthHeaders()
+        });
 
-      tr.innerHTML = `
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          throw new Error(data.error || "Không lấy được danh sách đơn quá hạn");
+        }
+
+        const rows = data.rows || [];
+        if (!rows.length) {
+          if (emptyEl) emptyEl.style.display = "block";
+          if (summaryEl) summaryEl.textContent = "0 đơn quá hạn cần xử lý.";
+          return;
+        }
+
+        if (table) table.style.display = "table";
+        if (summaryEl) summaryEl.textContent = `Có ${rows.length} đơn quá hạn (lâu nhất lên đầu).`;
+
+        rows.forEach(r => {
+          const tr = document.createElement("tr");
+          const exp = r.expiresAt ? new Date(r.expiresAt).toLocaleString("vi-VN") : "-";
+          const hasItemText = (r.hasItem === true) ? "true" : (r.hasItem === false ? "false" : "-");
+
+          const disableOpen = !!r.doorState && isDoorOpenState(r.doorState);
+          const disableClose = !!r.doorState && isDoorClosedState(r.doorState);
+          const disableConfirm = (r.hasItem === true); // nếu có cảm biến thì chặn nhả tủ khi còn hàng
+
+          tr.innerHTML = `
         <td class="small-text">${r.reservationId || "-"}</td>
         <td>${r.lockerId || "-"}</td>
         <td>${r.doorState || "-"}</td>
@@ -896,97 +1100,207 @@ async function loadOverdueTable() {
           ${r.hasItem === true ? `<div class="small-text" style="color:#b91c1c;margin-top:4px;">hasItem=true → chưa cho xác nhận nhả tủ.</div>` : ``}
         </td>
       `;
-      tbody.appendChild(tr);
-    });
+          tbody.appendChild(tr);
+        });
 
-  } catch (err) {
-    console.error(err);
-    if (summaryEl) summaryEl.textContent = err.message || "Lỗi tải danh sách đơn quá hạn.";
-  }
-}
+      } catch (err) {
+        console.error(err);
+        if (summaryEl) summaryEl.textContent = err.message || "Lỗi tải danh sách đơn quá hạn.";
+      }
+    }
 
-// ====== ACTIONS ======
-async function adminOverdueOpen(reservationId) {
-  const ok = confirm("Mở tủ để thu hồi?\nHãy chắc chắn bạn đang đứng tại tủ.");
-  if (!ok) return;
+    // ====== ACTIONS ======
+    async function adminOverdueOpen(reservationId) {
+      const ok = confirm("Mở tủ để thu hồi?\nHãy chắc chắn bạn đang đứng tại tủ.");
+      if (!ok) return;
 
-  const res = await fetch(`${API_BASE}/admin/overdue/open`, {
-    method: "POST",
-    headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ reservationId })
-  });
+      const res = await fetch(`${API_BASE}/admin/overdue/open`, {
+        method: "POST",
+        headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ reservationId })
+      });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.success === false) return alert(data.error || "Mở tủ thất bại");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return alert(data.error || "Mở tủ thất bại");
 
-  alert("Đã gửi lệnh mở.");
-  loadOverdueTable();
-}
+      alert("Đã gửi lệnh mở.");
+      loadOverdueTable();
+    }
 
-async function adminOverdueClose(reservationId) {
-  const res = await fetch(`${API_BASE}/admin/overdue/close`, {
-    method: "POST",
-    headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ reservationId })
-  });
+    async function adminOverdueClose(reservationId) {
+      const res = await fetch(`${API_BASE}/admin/overdue/close`, {
+        method: "POST",
+        headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ reservationId })
+      });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.success === false) return alert(data.error || "Đóng tủ thất bại");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return alert(data.error || "Đóng tủ thất bại");
 
-  alert("Đã gửi lệnh đóng.");
-  loadOverdueTable();
-}
+      alert("Đã gửi lệnh đóng.");
+      loadOverdueTable();
+    }
 
-async function adminOverdueConfirmPicked(reservationId, hasItem) {
-  if (hasItem === true) {
-    alert("hasItem=true → chưa thể xác nhận nhả tủ. Hãy lấy hết hàng trước.");
-    return;
-  }
+    async function adminOverdueConfirmPicked(reservationId, hasItem) {
+      if (hasItem === true) {
+        alert("hasItem=true → chưa thể xác nhận nhả tủ. Hãy lấy hết hàng trước.");
+        return;
+      }
 
-  const ok = confirm("Xác nhận admin đã lấy hàng và nhả tủ?");
-  if (!ok) return;
+      const ok = confirm("Xác nhận admin đã lấy hàng và nhả tủ?");
+      if (!ok) return;
 
-  const res = await fetch(`${API_BASE}/admin/overdue/confirm-picked`, {
-    method: "POST",
-    headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ reservationId })
-  });
+      const res = await fetch(`${API_BASE}/admin/overdue/confirm-picked`, {
+        method: "POST",
+        headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ reservationId })
+      });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.success === false) return alert(data.error || "Xác nhận thất bại");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return alert(data.error || "Xác nhận thất bại");
 
-  alert("Đã xác nhận lấy hàng & nhả tủ.");
-  loadOverdueTable();
-  loadAdminReservations();
-}
-let autoTimer = null;
-
-function startAutoRefresh() {
-  stopAutoRefresh();
-  autoTimer = setInterval(() => {
-    // chỉ refresh cái đang hiển thị
-    if (panelReservations.style.display !== "none") {
+      alert("Đã xác nhận lấy hàng & nhả tủ.");
+      loadOverdueTable();
       loadAdminReservations();
-      if (overdueVisible) loadOverdueTable();
     }
-    if (panelLockers.style.display !== "none") {
-     // refreshLockerStatus();
-    }
-  }, 10000); // 5 giây, bạn chỉnh 3-10s tuỳ thích
-}
+    let autoTimer = null;
 
-function stopAutoRefresh() {
-  if (autoTimer) clearInterval(autoTimer);
-  autoTimer = null;
-}
+    function startAutoRefresh() {
+      stopAutoRefresh();
+      autoTimer = setInterval(() => {
+        // chỉ refresh cái đang hiển thị
+        if (panelReservations.style.display !== "none") {
+          loadAdminReservations();
+          if (overdueVisible) loadOverdueTable();
+        }
+        if (panelLockers.style.display !== "none") {
+          // refreshLockerStatus();
+        }
+      }, 10000); // 5 giây, bạn chỉnh 3-10s tuỳ thích
+    }
+
+    function stopAutoRefresh() {
+      if (autoTimer) clearInterval(autoTimer);
+      autoTimer = null;
+    }
+
+    //incident
+    // ====== TOGGLE INCIDENTS ======
+    let incidentsVisible = false;
+
+    function toggleIncidentsTable() {
+      const wrap = document.getElementById("incidentsWrap");
+      const btn = document.getElementById("btnToggleIncidents");
+      incidentsVisible = !incidentsVisible;
+
+      if (wrap) wrap.style.display = incidentsVisible ? "block" : "none";
+      if (btn) {
+        btn.innerHTML = incidentsVisible
+          ? '<i class="fas fa-times"></i> Đóng Incidents'
+          : '<i class="fas fa-bug"></i> <strong>Sự cố (Incidents)</strong>';
+        btn.style.background = incidentsVisible ? "#8b5a2b" : "#fef2f2";
+        btn.style.color = incidentsVisible ? "#fff" : "#7f1d1d";
+      }
+
+      if (incidentsVisible) loadIncidentsTable();
+    }
+
+    function fmtTime(ms) {
+      if (!ms) return "-";
+      return new Date(ms).toLocaleString("vi-VN");
+    }
+
+    // ====== LOAD INCIDENTS ======
+    async function loadIncidentsTable() {
+      const tbody = document.getElementById("incidentsTbody");
+      const table = document.getElementById("incidentsTable");
+      const emptyEl = document.getElementById("incidentsEmpty");
+      const summaryEl = document.getElementById("incidentsSummary");
+      if (!tbody) return;
+
+      tbody.innerHTML = "";
+      if (emptyEl) emptyEl.style.display = "none";
+      if (table) table.style.display = "none";
+      if (summaryEl) summaryEl.textContent = "Đang tải incidents...";
+
+      try {
+        const res = await fetch(`${API_BASE}/admin/incidents?status=open&limit=200`, {
+          method: "GET",
+          headers: authManager.getAuthHeaders(),
+          // nếu bạn dùng cookie authToken thay vì header, bật thêm dòng dưới:
+          // credentials: "include"
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          throw new Error(data.error || "Không lấy được incidents");
+        }
+
+        const rows = data.rows || [];
+        if (!rows.length) {
+          if (emptyEl) emptyEl.style.display = "block";
+          if (summaryEl) summaryEl.textContent = "0 sự cố đang mở.";
+          return;
+        }
+
+        if (table) table.style.display = "table";
+        if (summaryEl) summaryEl.textContent = `Đang mở: ${rows.length} sự cố.`;
+
+        rows.forEach(it => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+        <td>${fmtTime(it.createdAt)}</td>
+        <td>${it.type || "-"}</td>
+        <td>${it.lockerId || "-"}</td>
+        <td class="small-text">${it.reservationId || "-"}</td>
+        <td class="small-text">${(it.note || "").toString()}</td>
+        <td>${it.status || "-"}</td>
+        <td>
+          <button class="btn-danger" style="margin-top:0;" onclick="resolveIncident('${it.id}')">
+            <i class="fas fa-check"></i> Resolve
+          </button>
+        </td>
+      `;
+          tbody.appendChild(tr);
+        });
+
+      } catch (err) {
+        console.error(err);
+        if (summaryEl) summaryEl.textContent = err.message || "Lỗi load incidents.";
+      }
+    }
+
+    // ====== RESOLVE INCIDENT ======
+    async function resolveIncident(incidentId) {
+      const ok = confirm("Đóng sự cố này (resolve)?");
+      if (!ok) return;
+
+      const res = await fetch(`${API_BASE}/admin/incidents/resolve`, {
+        method: "POST",
+        headers: { ...authManager.getAuthHeaders(), "Content-Type": "application/json" },
+        // nếu dùng cookie:
+        // credentials: "include",
+        body: JSON.stringify({ incidentId })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        return alert(data.error || "Resolve thất bại");
+      }
+
+      alert("Đã resolve sự cố.");
+      loadIncidentsTable();
+    }
+
 
 
 
     // Khởi tạo ban đầu
     document.addEventListener("DOMContentLoaded", () => {
       loadAdminReservations();
-     // startAutoRefresh();
+      // startAutoRefresh();
     });
   </script>
 </body>
+
 </html>
